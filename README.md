@@ -79,3 +79,24 @@ cp .env.example .env
 ~~~bash
 streamlit run src/ui/app.py
 ~~~
+
+### 4. 로컬 오픈웨이트 LLM Smoke Test
+
+LLM 후처리는 기본값 `baseline`에서는 실행되지 않습니다. 실제 모델 동작 확인은 `lg_agent` 환경에서 별도로 진행합니다.
+`.env`의 `LLM_PROGRESS_LOG_INTERVAL`은 토큰 생성 진행 로그를 몇 토큰마다 찍을지 정합니다. `0`이면 토큰 진행 로그를 끕니다.
+
+~~~powershell
+conda activate lg_agent
+python -m pip install -U "transformers>=4.51.0" "accelerate>=0.26.0" "safetensors>=0.4.5" "huggingface_hub[hf_xet]>=0.20.0"
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+hf download Qwen/Qwen3-4B-Instruct-2507
+
+python scripts\smoke_test_local_llm.py
+~~~
+
+VRAM 부족 시 1.7B 모델로 낮춰 같은 smoke test를 반복합니다. `.env`의 `LOCAL_LLM_MODEL_ID`를 바꾸거나 Anaconda Prompt에서 임시로 override합니다.
+
+~~~powershell
+set LOCAL_LLM_MODEL_ID=Qwen/Qwen3-1.7B
+python scripts\smoke_test_local_llm.py
+~~~
