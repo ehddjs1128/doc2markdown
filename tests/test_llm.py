@@ -205,6 +205,95 @@ class ContentEnricherTests(unittest.TestCase):
         self.assertEqual(len(client.calls), 1)
         self.assertEqual(len(client.calls[0][1]["items"]), 2)
 
+    def test_long_korean_ocr_spacing_repair_applies_with_single_item_batch(self):
+        original = (
+            "본 문서는 웹 기반 계산기 애플리케이션의 기 능적, 비기능적 요구사항을 정의하기 위해 "
+            "작 성되었습니다. React.js 프레임워크를 기반으로 하며, PWA(Progressive Web App) "
+            "표준을 준 수하여 다양한 디바이스에서 일관된 사용자 경 험을 제공합니다."
+        )
+        repaired = (
+            "본 문서는 웹 기반 계산기 애플리케이션의 기능적, 비기능적 요구사항을 정의하기 위해 "
+            "작성되었습니다. React.js 프레임워크를 기반으로 하며, PWA(Progressive Web App) "
+            "표준을 준수하여 다양한 디바이스에서 일관된 사용자 경험을 제공합니다."
+        )
+        result = AssemblyResult(
+            document=AssembledDocument(
+                children=[
+                    ParagraphGroup(
+                        id="paragraph_2",
+                        block_ids=["p1_text_8"],
+                        text=original,
+                    )
+                ]
+            ),
+            metadata=AssemblyMeta(stage="structure_assembled"),
+        )
+        client = FakeLLMClient(
+            {
+                "content_repair": {
+                    "repairs": [
+                        {"node_id": "paragraph_2", "text": repaired, "confidence": 0.93}
+                    ]
+                }
+            }
+        )
+
+        enriched = ContentEnricher(
+            config=LLMConfig(
+                mode="content",
+                model_id="fake-local-llm",
+                content_batch_size=1,
+                content_min_chars=20,
+            ),
+            client=client,
+        ).apply(result)
+
+        self.assertEqual(enriched.document.children[0].text, repaired)
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0][1]["items"][0]["node_id"], "paragraph_2")
+
+    def test_content_summary_counts_parsed_matched_missing_and_unchanged_repairs(self):
+        result = AssemblyResult(
+            document=AssembledDocument(
+                children=[
+                    ParagraphGroup(id="paragraph_1", block_ids=["b1"], text="기 능적 요구사항"),
+                    ParagraphGroup(id="paragraph_2", block_ids=["b2"], text="정상 문장입니다"),
+                    ParagraphGroup(id="paragraph_3", block_ids=["b3"], text="작 성되었습니다"),
+                ]
+            ),
+            metadata=AssemblyMeta(stage="structure_assembled"),
+        )
+        client = FakeLLMClient(
+            {
+                "content_repair": {
+                    "repairs": [
+                        {"node_id": "paragraph_1", "text": "기능적 요구사항", "confidence": 0.9},
+                        {"node_id": "paragraph_2", "text": "정상 문장입니다", "confidence": 0.8},
+                    ]
+                }
+            }
+        )
+
+        enriched = ContentEnricher(
+            config=LLMConfig(
+                mode="content",
+                model_id="fake-local-llm",
+                content_batch_size=8,
+                content_min_chars=0,
+            ),
+            client=client,
+        ).apply(result)
+        summary = enriched.document.metadata["llm_enrichment"]["content"]
+
+        self.assertEqual(enriched.document.children[0].text, "기능적 요구사항")
+        self.assertEqual(enriched.document.children[1].text, "정상 문장입니다")
+        self.assertEqual(enriched.document.children[2].text, "작 성되었습니다")
+        self.assertEqual(summary["parsed_count"], 2)
+        self.assertEqual(summary["matched_count"], 2)
+        self.assertEqual(summary["missing_repair_count"], 1)
+        self.assertEqual(summary["unchanged_count"], 1)
+        self.assertEqual(summary["applied_count"], 1)
+
     def test_content_repair_skips_text_below_min_chars_threshold(self):
         result = AssemblyResult(
             document=AssembledDocument(

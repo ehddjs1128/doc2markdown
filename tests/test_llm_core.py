@@ -84,6 +84,51 @@ class LocalTransformersLLMClientTests(unittest.TestCase):
         self.assertEqual(model.generate_kwargs["attention_mask"].device, "cuda:0")
         self.assertEqual(model.generate_kwargs["max_new_tokens"], 7)
 
+    def test_content_task_uses_content_max_new_tokens(self):
+        tokenizer = FakeTokenizer()
+        model = FakeModel()
+        client = LocalTransformersLLMClient(
+            LLMConfig(
+                model_id="fake-local-llm",
+                max_new_tokens=7,
+                content_max_new_tokens=11,
+            )
+        )
+        client._tokenizer = tokenizer
+        client._model = model
+
+        client.generate_json("content_repair", {"items": []})
+
+        self.assertEqual(model.generate_kwargs["max_new_tokens"], 11)
+
+    def test_non_content_task_uses_general_max_new_tokens(self):
+        tokenizer = FakeTokenizer()
+        model = FakeModel()
+        client = LocalTransformersLLMClient(
+            LLMConfig(
+                model_id="fake-local-llm",
+                max_new_tokens=7,
+                content_max_new_tokens=11,
+            )
+        )
+        client._tokenizer = tokenizer
+        client._model = model
+
+        client.generate_json("semantic_enrichment", {"items": []})
+
+        self.assertEqual(model.generate_kwargs["max_new_tokens"], 7)
+
+    def test_content_prompt_mentions_ocr_spacing_examples(self):
+        prompt = LocalTransformersLLMClient._build_prompt("content_repair", {"items": []})
+
+        self.assertIn("OCR/PDF", prompt)
+        self.assertIn("모든 입력 item", prompt)
+        self.assertIn("비공백 문자 시퀀스", prompt)
+        self.assertIn("기 능적 -> 기능적", prompt)
+        self.assertIn("작 성되었습니다 -> 작성되었습니다", prompt)
+        self.assertIn("준 수하여 -> 준수하여", prompt)
+        self.assertIn("경 험 -> 경험", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

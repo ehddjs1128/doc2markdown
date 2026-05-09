@@ -38,6 +38,7 @@ class LLMConfig:
     model_id: str = DEFAULT_MODEL_ID
     mode: str = DEFAULT_ENRICHMENT_MODE
     max_new_tokens: int = 512
+    content_max_new_tokens: int | None = None
     progress_log_interval: int = 0
     content_batch_size: int = 8
     content_min_chars: int = 12
@@ -53,11 +54,17 @@ class LLMConfig:
             model_id=os.getenv("LOCAL_LLM_MODEL_ID", DEFAULT_MODEL_ID).strip() or DEFAULT_MODEL_ID,
             mode=mode,
             max_new_tokens=_env_int("LLM_MAX_NEW_TOKENS", default=512),
+            content_max_new_tokens=_env_optional_int("LLM_CONTENT_MAX_NEW_TOKENS"),
             progress_log_interval=_env_int("LLM_PROGRESS_LOG_INTERVAL", default=0),
             content_batch_size=max(1, _env_int("LLM_CONTENT_BATCH_SIZE", default=8)),
             content_min_chars=max(0, _env_int("LLM_CONTENT_MIN_CHARS", default=12)),
             temperature=_env_float("LLM_TEMPERATURE", default=0.0),
         )
+
+    def max_new_tokens_for_task(self, task: str) -> int:
+        if task == "content_repair" and self.content_max_new_tokens is not None:
+            return self.content_max_new_tokens
+        return self.max_new_tokens
 
     def runs_semantic(self) -> bool:
         return self.mode in {"semantic", "all"}
@@ -97,12 +104,13 @@ class LocalTransformersLLMClient:
 
         model_inputs = self._build_model_inputs(tokenizer, messages, model.device)
         input_ids = model_inputs["input_ids"]
+        max_new_tokens = self.config.max_new_tokens_for_task(task)
         generation_kwargs: dict[str, Any] = {
-            "max_new_tokens": self.config.max_new_tokens,
+            "max_new_tokens": max_new_tokens,
             "do_sample": self.config.temperature > 0,
             "pad_token_id": tokenizer.eos_token_id,
         }
-        stopping_criteria = self._build_progress_stopping_criteria(task, input_ids.shape[-1])
+        stopping_criteria = self._build_progress_stopping_criteria(task, input_ids.shape[-1], max_new_tokens)
         if stopping_criteria is not None:
             generation_kwargs["stopping_criteria"] = stopping_criteria
         if self.config.temperature > 0:
@@ -134,7 +142,7 @@ class LocalTransformersLLMClient:
         self._model = model
         return tokenizer, model
 
-    def _build_progress_stopping_criteria(self, task: str, prompt_tokens: int) -> Any | None:
+    def _build_progress_stopping_criteria(self, task: str, prompt_tokens: int, max_new_tokens: int) -> Any | None:
         interval = self.config.progress_log_interval
         if interval <= 0:
             return None
@@ -143,8 +151,6 @@ class LocalTransformersLLMClient:
             from transformers import StoppingCriteria, StoppingCriteriaList
         except Exception:
             return None
-
-        max_new_tokens = self.config.max_new_tokens
 
         class ProgressLogger(StoppingCriteria):
             def __init__(self):
@@ -209,9 +215,31 @@ class LocalTransformersLLMClient:
 
     @staticmethod
     def _build_prompt(task: str, payload: dict[str, Any]) -> str:
+        if task == "content_repair":
+            return LocalTransformersLLMClient._build_content_repair_prompt(payload)
+
         return (
             f"작업: {task}\n"
             "요청 schema 정확히 준수. 원문 의미 보존.\n"
+            f"입력 JSON:\n{json.dumps(payload, ensure_ascii=False)}"
+        )
+
+    @staticmethod
+    def _build_content_repair_prompt(payload: dict[str, Any]) -> str:
+        return (
+            "작업: content_repair\n"
+            "역할: OCR/PDF 줄바꿈 때문에 한국어 단어 내부에 삽입된 잘못된 공백 보정.\n"
+            "출력은 반드시 JSON 객체 하나만 반환.\n"
+            '출력 형식: {"repairs":[{"node_id":"...","text":"...","confidence":0.0}]}\n'
+            "모든 입력 item에 대해 repairs 항목 하나를 반환.\n"
+            "공백만 변경. 비공백 문자 시퀀스는 원문과 완전히 동일해야 함.\n"
+            "정상 띄어쓰기, 영어, 숫자, 기호, 괄호, URL, 코드처럼 보이는 조각은 보존.\n"
+            "확신이 낮으면 원문 text를 그대로 반환하고 confidence를 0.5로 설정.\n"
+            "예시:\n"
+            "- 기 능적 -> 기능적\n"
+            "- 작 성되었습니다 -> 작성되었습니다\n"
+            "- 준 수하여 -> 준수하여\n"
+            "- 경 험 -> 경험\n"
             f"입력 JSON:\n{json.dumps(payload, ensure_ascii=False)}"
         )
 
@@ -270,6 +298,16 @@ def _env_int(name: str, *, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _env_optional_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return None
 
 
 def _env_float(name: str, *, default: float) -> float:

@@ -24,7 +24,7 @@ from modules.assembly.ir import (
     SectionNode,
     TableRef,
 )
-from modules.llm_core import LLMClient, LLMConfig, LocalTransformersLLMClient
+from modules.llm_core import LLMClient, LLMConfig, LLMGenerationError, LocalTransformersLLMClient
 from modules.llm_response_parser import (
     ALLOWED_SEMANTIC_KINDS,
     CaptionLink,
@@ -339,18 +339,25 @@ class ContentEnricher:
             "enrichment_mode": self.config.mode,
             "content_batch_size": self.config.content_batch_size,
             "content_min_chars": self.config.content_min_chars,
+            "content_max_new_tokens": self.config.max_new_tokens_for_task(CONTENT_TASK),
             "llm_candidate_count": 0,
             "batch_count": 0,
             "attempt_count": 0,
+            "parsed_count": 0,
+            "matched_count": 0,
+            "unchanged_count": 0,
+            "missing_repair_count": 0,
             "applied_count": 0,
             "discarded_count": 0,
             "rule_repair_count": 0,
+            "failed_batch_count": 0,
+            "json_parse_failure_count": 0,
         }
 
         print(
             f"[LLM][Content] 시작: model={client.model_id}, "
             f"children={len(result.document.children)}, sections={len(result.document.sections)}, "
-            f"max_new_tokens={self.config.max_new_tokens}, "
+            f"max_new_tokens={self.config.max_new_tokens_for_task(CONTENT_TASK)}, "
             f"batch_size={self.config.content_batch_size}, min_chars={self.config.content_min_chars}"
         )
         started_at = time.perf_counter()
@@ -381,8 +388,11 @@ class ContentEnricher:
         print(
             f"[LLM][Content] 완료: candidates={summary['llm_candidate_count']}, "
             f"batches={summary['batch_count']}, attempts={summary['attempt_count']}, "
+            f"parsed={summary['parsed_count']}, matched={summary['matched_count']}, "
+            f"missing={summary['missing_repair_count']}, unchanged={summary['unchanged_count']}, "
             f"applied={summary['applied_count']}, discarded={summary['discarded_count']}, "
-            f"rule_repairs={summary['rule_repair_count']}, warnings={len(warnings)}, "
+            f"rule_repairs={summary['rule_repair_count']}, failed_batches={summary['failed_batch_count']}, "
+            f"warnings={len(warnings)}, "
             f"elapsed={_elapsed_seconds(started_at)}s"
         )
 
@@ -521,6 +531,7 @@ class ContentEnricher:
                 "llm_language": language,
             }
 
+        summary["unchanged_count"] += 1
         return text, dict(metadata)
 
     def _collect_repair_candidates(self, nodes: list[Any]) -> list[_ContentRepairCandidate]:
@@ -584,6 +595,9 @@ class ContentEnricher:
             try:
                 response = self._client().generate_json(CONTENT_TASK, self._build_content_payload(batch))
             except Exception as error:
+                summary["failed_batch_count"] += 1
+                if isinstance(error, LLMGenerationError):
+                    summary["json_parse_failure_count"] += 1
                 print(
                     f"[LLM][Content] batch {batch_index}/{len(batches)} 실패: "
                     f"items={len(batch)}, error={type(error).__name__}, "
@@ -601,9 +615,12 @@ class ContentEnricher:
 
             repairs = parse_content_repairs(response)
             matched_count = self._store_matched_repairs(batch, repairs, repairs_by_node)
+            summary["parsed_count"] += len(repairs)
+            summary["matched_count"] += matched_count
+            summary["missing_repair_count"] += max(0, len(batch) - matched_count)
             print(
                 f"[LLM][Content] batch {batch_index}/{len(batches)} 완료: "
-                f"parsed={len(repairs)}, matched={matched_count}, "
+                f"parsed={len(repairs)}, matched={matched_count}, missing={max(0, len(batch) - matched_count)}, "
                 f"elapsed={_elapsed_seconds(started_at)}s"
             )
         return repairs_by_node
