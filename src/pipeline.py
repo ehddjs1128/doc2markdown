@@ -87,8 +87,8 @@ class DocumentToMarkdownPipeline:
 
         print("▶ [Step 4] 표 Markdown 변환 중...")
         table_result = self._build_table_results(extracted_result)
-        if self._uses_direct_table_extraction() and hasattr(self.text_extractor, "release_model"):
-            self.text_extractor.release_model()
+        if hasattr(self.table_extractor, "release_model"):
+            self.table_extractor.release_model()
         self._save_json(output_dir / "table_results.json", table_result)
 
         print("▶ [Step 5] 문서 조립 중...")
