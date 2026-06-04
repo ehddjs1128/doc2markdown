@@ -342,35 +342,6 @@ def process_table_hybrid(image_path):
                 cell["easyocr_text"] = " ".join(matched_texts)
                 cell["easyocr_conf"] = sum(matched_confs) / len(matched_confs)
 
-    debug_img = img_cv_padded.copy()
-
-    # 1. TATR이 나눈 전체 셀 격자 그리기 (파란색 선)
-    for row_index in range(num_rows):
-        for col_index in range(num_cols):
-            cell = grid[row_index][col_index]
-            cx1, cy1, cx2, cy2 = map(int, cell["bbox"])
-            # 마스터 셀(병합의 기준점)은 굵은 파란색, 종속 셀은 얇은 파란색
-            if not cell["is_master"]:
-                continue
-            cv2.rectangle(debug_img, (cx1, cy1), (cx2, cy2), (255, 0, 0), 2)
-
-    # 2. EasyOCR이 찾은 텍스트 바운딩 박스 그리기 (초록색 선)
-    for tb in text_boxes:
-        tx1, ty1, tx2, ty2 = tb["bbox"]
-        cv2.rectangle(debug_img, (tx1, ty1), (tx2, ty2), (0, 255, 0), 2)
-        
-        # 인식한 텍스트를 박스 위에 작게 적어주기 (빨간색 글씨)
-        # 한글은 cv2.putText로 깨질 수 있지만, 영어/숫자/특수문자는 잘 보임
-        debug_text = tb["text"]
-        cv2.putText(debug_img, debug_text, (tx1, max(ty1 - 5, 0)), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-
-    # 3. 결과 이미지 파일로 저장
-    debug_save_path = "debug_vision_boxes.jpg"
-    cv2.imwrite(debug_save_path, debug_img)
-    print(f"[디버그] 중간 과정 이미지를 '{debug_save_path}'에 저장했습니다.")
-    # ---------------------------------------------------------
-
     print(f"4. 조건부 VLM 정밀 텍스트 추출 (EasyOCR Threshold: {EASYOCR_CONF_THRESHOLD})")
     cell_tasks = []
     easyocr_pass_count = 0
