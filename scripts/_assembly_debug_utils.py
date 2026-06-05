@@ -4,13 +4,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-from modules.assembly.adapters import AssemblyInputAdapter
 from modules.assembly.ir import AssemblyResult
-from modules.assembly.normalize_filter import NormalizeFilter
-from modules.assembly.structure import StructureAssembler
-from modules.assembly.validator import AssemblyValidator
-from modules.llm_core import LLMConfig
-from modules.llm_enrichment import ContentEnricher, SemanticEnricher
+from modules.assembly.service import DocumentAssembler
 
 
 ASSEMBLY_STAGE_OUTPUTS = [
@@ -68,27 +63,7 @@ def build_stage_results_from_outputs(
     layout_output: Any,
     table_output: Any = None,
 ) -> Dict[str, AssemblyResult]:
-    seed_result = AssemblyInputAdapter.from_raw(
-        {
-            "layout_output": layout_output,
-            "table_output": table_output,
-        }
-    )
-    normalized_result = NormalizeFilter.apply(seed_result)
-    config = LLMConfig.from_env()
-    semantic_result = SemanticEnricher(config=config).apply(normalized_result)
-    structure_result = StructureAssembler.apply(semantic_result)
-    content_result = ContentEnricher(config=config).apply(structure_result)
-    validated_result = AssemblyValidator.apply(content_result)
-
-    stage_results = {
-        "adapter_seed": seed_result,
-        "normalized": normalized_result,
-        "structure_assembled": structure_result,
-        "validated": validated_result,
-    }
-    if config.runs_semantic():
-        stage_results["semantic_enriched"] = semantic_result
-    if config.runs_content():
-        stage_results["content_enriched"] = content_result
-    return stage_results
+    return DocumentAssembler().build_from_outputs_with_trace(
+        layout_output,
+        table_output,
+    ).stages

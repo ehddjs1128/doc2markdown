@@ -9,6 +9,30 @@ from modules.assembly.structure import StructureAssembler
 from modules.assembly.validator import AssemblyValidator
 
 
+class _FakeEnricherConfig:
+    def __init__(self, *, mode="all", semantic=True, content=True):
+        self.mode = mode
+        self._semantic = semantic
+        self._content = content
+
+    def runs_semantic(self):
+        return self._semantic
+
+    def runs_content(self):
+        return self._content
+
+
+class _RecordingEnricher:
+    def __init__(self, name, calls, config):
+        self.name = name
+        self.calls = calls
+        self.config = config
+
+    def apply(self, result):
+        self.calls.append((self.name, result.metadata.stage))
+        return result
+
+
 class AssemblyServiceContractTests(unittest.TestCase):
     def test_document_assembler_merges_layout_and_table_outputs(self):
         result = DocumentAssembler().build(load_assembly_fixture("table_caption_note"))
@@ -50,6 +74,49 @@ class AssemblyServiceContractTests(unittest.TestCase):
         self.assertEqual(table_ref.metadata["crop_path"], "data/output\\sample_layout.pdf\\crops\\p1_table_7.png")
         self.assertEqual(table_ref.metadata["link_strategy"], "document_order")
         self.assertIn("|", table_ref.metadata["markdown"])
+
+    def test_build_from_outputs_with_trace_calls_enrichers_in_current_order(self):
+        fixture = load_assembly_fixture("layout_markdown_link")
+        calls = []
+        config = _FakeEnricherConfig(mode="all", semantic=True, content=True)
+
+        trace = DocumentAssembler().build_from_outputs_with_trace(
+            fixture["layout_output"],
+            fixture["table_markdown"],
+            semantic_enricher=_RecordingEnricher("semantic", calls, config),
+            content_enricher=_RecordingEnricher("content", calls, config),
+        )
+
+        self.assertEqual(trace.result.metadata.stage, "validated")
+        self.assertEqual(calls, [("semantic", "normalized"), ("content", "structure_assembled")])
+        self.assertEqual(
+            list(trace.stages),
+            [
+                "adapter_seed",
+                "normalized",
+                "semantic_enriched",
+                "structure_assembled",
+                "content_enriched",
+                "validated",
+            ],
+        )
+
+    def test_build_from_outputs_with_trace_baseline_noop_still_validates(self):
+        fixture = load_assembly_fixture("layout_markdown_link")
+        calls = []
+        config = _FakeEnricherConfig(mode="baseline", semantic=False, content=False)
+
+        trace = DocumentAssembler().build_from_outputs_with_trace(
+            fixture["layout_output"],
+            fixture["table_markdown"],
+            semantic_enricher=_RecordingEnricher("semantic", calls, config),
+            content_enricher=_RecordingEnricher("content", calls, config),
+        )
+
+        self.assertEqual(trace.result.metadata.stage, "validated")
+        self.assertEqual(calls, [("semantic", "normalized"), ("content", "structure_assembled")])
+        self.assertNotIn("semantic_enriched", trace.stages)
+        self.assertNotIn("content_enriched", trace.stages)
 
 
 class AssemblyStageContractTests(unittest.TestCase):

@@ -1,9 +1,8 @@
 import json
 import os
-import time
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 from dotenv import load_dotenv
@@ -47,12 +46,13 @@ class DocumentToMarkdownPipeline:
         self.output_base_dir = self.project_root / "data" / "output"
         self.temp_dir = self.project_root / "data" / "temp"
         self.table_extraction_mode = os.getenv("TABLE_EXTRACTION_MODE", "direct").strip().lower()
+        self.table_extraction_enabled = _env_bool("TABLE_EXTRACTION_ENABLED", default=True)
         self.force_table_extraction_fallback = _env_bool("TABLE_EXTRACTION_FORCE_FALLBACK")
 
         self.preprocessor = preprocessor or FilePreProcessor(temp_dir=str(self.temp_dir))
         self.vision_engine = vision_engine or LayoutAnalyzer(output_base_dir=str(self.output_base_dir))
         self.text_extractor = text_extractor or TextExtractor()
-        self.table_extractor = None if self.force_table_extraction_fallback else table_extractor or self._create_table_extractor()
+        self.table_extractor = None if self._skips_table_extraction() else table_extractor or self._create_table_extractor()
         self.assembler = assembler or DocumentAssembler()
         self.renderer = renderer or MarkdownRenderer()
         self.llm_config = LLMConfig.from_env()
@@ -89,8 +89,8 @@ class DocumentToMarkdownPipeline:
             self.table_extractor.release_model()
         self._save_json(output_dir / "table_results.json", table_result)
 
-        print("▶ [Step 5] 문서 조립 중...")
-        assembly_result = self._build_assembly_with_optional_enrichment(extracted_result, table_result)
+        print("[Pipeline] Step 5/6 Assembly IR build + LLM enrichment")
+        assembly_result = self._build_assembly_ir(extracted_result, table_result)
         assembly_result_dict = self._serialize(assembly_result)
         self._save_json(output_dir / "assembly_result.json", assembly_result_dict)
 
@@ -108,16 +108,7 @@ class DocumentToMarkdownPipeline:
         """전체 파이프라인 실행 및 최종 Markdown 저장."""
         result = self.run_until_assembly(file_path=file_path)
 
-        if render_markdown and self.renderer is not None:
-            print("▶ [Step 6] Markdown 렌더링 중...")
-            output_dir = Path(result["output_dir"])
-            markdown_result = self.renderer.render(result["assembly_result"])
-            saved_paths = self.renderer.save(markdown_result, output_dir=output_dir)
-            result["markdown_result"] = self._serialize(markdown_result)
-            result["saved_paths"] = saved_paths
-        else:
-            result["markdown_result"] = None
-            result["saved_paths"] = {}
+        self._render_markdown(result, render_markdown=render_markdown)
 
         self._save_json(Path(result["output_dir"]) / "pipeline_result.json", result)
         self._cleanup_temp_images(self._collect_temp_image_paths(result["layout_result"]))
@@ -147,10 +138,10 @@ class DocumentToMarkdownPipeline:
                     "source_block_ids": [table_id],
                 }
 
-                print(f"[Pipeline] 표 추출 시작: {table_id}")
-                if self.force_table_extraction_fallback:
-                    table_entry["extraction_error"] = "TABLE_EXTRACTION_FORCE_FALLBACK=true"
-                    print(f"[Pipeline] table extraction forced fallback: {table_id}")
+                print(f"[Pipeline][Table] 추출 시작: {table_id}")
+                if self._skips_table_extraction():
+                    table_entry["extraction_error"] = self._table_extraction_skip_reason()
+                    print(f"[Pipeline][Table] fallback 사용: {table_id}")
                     table_results.append(table_entry)
                     continue
 
@@ -170,44 +161,28 @@ class DocumentToMarkdownPipeline:
 
         return table_results
 
-    def _build_assembly_with_optional_enrichment(self, layout_result: Any, table_result: Any):
-        """선택형 로컬 LLM 보강 단계를 포함한 Assembly IR 생성."""
-        seed_result = self._run_assembly_stage(
-            "adapter_seed",
-            lambda: self.assembler.build_seed_from_outputs(layout_result, table_result),
+    def _build_assembly_ir(self, layout_result: Any, table_result: Any) -> Any:
+        """Build Assembly IR through the assembly module, including optional LLM enrichment."""
+        trace = self.assembler.build_from_outputs_with_trace(
+            layout_result,
+            table_result,
+            semantic_enricher=self.semantic_enricher,
+            content_enricher=self.content_enricher,
         )
-        normalized_result = self._run_assembly_stage(
-            "NormalizeFilter",
-            lambda: self.assembler.normalize(seed_result),
-        )
+        return trace.result
 
-        if self.llm_config.runs_semantic():
-            semantic_result = self._run_assembly_stage(
-                "SemanticEnricher",
-                lambda: self.semantic_enricher.apply(normalized_result),
-            )
-        else:
-            print(f"[Pipeline][Assembly] SemanticEnricher 건너뜀: mode={self.llm_config.mode}")
-            semantic_result = self.semantic_enricher.apply(normalized_result)
+    def _render_markdown(self, result: Dict[str, Any], *, render_markdown: bool) -> None:
+        if not render_markdown or self.renderer is None:
+            result["markdown_result"] = None
+            result["saved_paths"] = {}
+            return
 
-        structure_result = self._run_assembly_stage(
-            "StructureAssembler",
-            lambda: self.assembler.assemble_structure(semantic_result),
-        )
-
-        if self.llm_config.runs_content():
-            content_result = self._run_assembly_stage(
-                "ContentEnricher",
-                lambda: self.content_enricher.apply(structure_result),
-            )
-        else:
-            print(f"[Pipeline][Assembly] ContentEnricher 건너뜀: mode={self.llm_config.mode}")
-            content_result = self.content_enricher.apply(structure_result)
-
-        return self._run_assembly_stage(
-            "AssemblyValidator",
-            lambda: self.assembler.validate(content_result),
-        )
+        print("[Pipeline] Step 6/6 Markdown rendering")
+        output_dir = Path(result["output_dir"])
+        markdown_result = self.renderer.render(result["assembly_result"])
+        saved_paths = self.renderer.save(markdown_result, output_dir=output_dir)
+        result["markdown_result"] = self._serialize(markdown_result)
+        result["saved_paths"] = saved_paths
 
     def _build_table_id(self, page_num: int, raw_element_id: Any) -> str:
         """Assembly 어댑터와 같은 규칙의 table id 생성."""
@@ -244,43 +219,18 @@ class DocumentToMarkdownPipeline:
         """표 추출의 현재 프로세스 직접 실행 여부 반환."""
         return self.table_extraction_mode == "direct"
 
+    def _skips_table_extraction(self) -> bool:
+        return self.force_table_extraction_fallback or not self.table_extraction_enabled
+
+    def _table_extraction_skip_reason(self) -> str:
+        if self.force_table_extraction_fallback:
+            return "TABLE_EXTRACTION_FORCE_FALLBACK=true"
+        return "TABLE_EXTRACTION_ENABLED=false"
+
     def _print_table_config(self) -> None:
-        print(f"[Pipeline] TABLE_EXTRACTION_MODE={self.table_extraction_mode}")
-        print(f"[Pipeline] TABLE_EXTRACTION_FORCE_FALLBACK={self.force_table_extraction_fallback}")
-
-    def _run_assembly_stage(self, label: str, action: Callable[[], Any]) -> Any:
-        """Assembly 세부 단계 실행 로그 출력."""
-        print(f"[Pipeline][Assembly] {label} 시작")
-        started_at = time.perf_counter()
-        result = action()
-        self._print_assembly_stage_summary(label, result, started_at)
-        return result
-
-    def _print_assembly_stage_summary(self, label: str, result: Any, started_at: float) -> None:
-        """Assembly 세부 단계 요약 로그 출력."""
-        elapsed = time.perf_counter() - started_at
-        metadata = getattr(result, "metadata", None)
-        stage = getattr(metadata, "stage", None) or "-"
-        elements = getattr(result, "ordered_elements", []) or []
-        warnings = getattr(result, "warnings", []) or []
-        document = getattr(result, "document", None)
-
-        print(
-            f"[Pipeline][Assembly] {label} 완료: "
-            f"stage={stage}, elements={len(elements)}, warnings={len(warnings)}, elapsed={elapsed:.2f}s"
-        )
-        if document is None:
-            return
-
-        children = getattr(document, "children", []) or []
-        sections = getattr(document, "sections", []) or []
-        table_refs = getattr(document, "table_refs", []) or []
-        figure_refs = getattr(document, "figure_refs", []) or []
-        print(
-            f"[Pipeline][Assembly] {label} document: "
-            f"children={len(children)}, sections={len(sections)}, "
-            f"tables={len(table_refs)}, figures={len(figure_refs)}"
-        )
+        print(f"[Pipeline][Config] TABLE_EXTRACTION_MODE={self.table_extraction_mode}")
+        print(f"[Pipeline][Config] TABLE_EXTRACTION_ENABLED={self.table_extraction_enabled}")
+        print(f"[Pipeline][Config] TABLE_EXTRACTION_FORCE_FALLBACK={self.force_table_extraction_fallback}")
 
     def _print_llm_config(self) -> None:
         """로컬 LLM 후처리 설정 로그 출력."""
@@ -374,8 +324,11 @@ class DocumentToMarkdownPipeline:
         return value
 
 
-def _env_bool(name: str) -> bool:
-    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 if __name__ == "__main__":

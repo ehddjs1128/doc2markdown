@@ -43,7 +43,7 @@ class LayoutOrderDebugPipeline:
     ):
         try:
             from modules.ingestion import FilePreProcessor
-            from modules.renderer import MarkdownRenderer
+            from modules.rendering.service import MarkdownRenderer
             from modules.text_extractor import TextExtractor
             from modules.vision_engine import LayoutAnalyzer
         except ModuleNotFoundError as error:
@@ -56,12 +56,15 @@ class LayoutOrderDebugPipeline:
         self.output_base_dir = self.project_root / "data" / "output"
         self.temp_dir = self.project_root / "data" / "temp"
         self.table_extraction_mode = os.getenv("TABLE_EXTRACTION_MODE", "direct").strip().lower()
+        self.table_extraction_enabled = _env_bool("TABLE_EXTRACTION_ENABLED", default=True)
+        self.force_table_extraction_fallback = _env_bool("TABLE_EXTRACTION_FORCE_FALLBACK")
 
         self.preprocessor = preprocessor or FilePreProcessor(temp_dir=str(self.temp_dir))
         self.vision_engine = vision_engine or LayoutAnalyzer(output_base_dir=str(self.output_base_dir))
         self.text_extractor = text_extractor or TextExtractor()
-        self.table_extractor = table_extractor or self._create_table_extractor()
+        self.table_extractor = None if self._skips_table_extraction() else table_extractor or self._create_table_extractor()
         self.renderer = renderer or MarkdownRenderer()
+        self._print_table_config()
 
     def run(
         self,
@@ -166,6 +169,12 @@ class LayoutOrderDebugPipeline:
                 }
 
                 print(f"[DebugPipeline] table extraction: {table_id}")
+                if self._skips_table_extraction():
+                    table_entry["extraction_error"] = self._table_extraction_skip_reason()
+                    print(f"[DebugPipeline] table fallback: {table_id}")
+                    table_results.append(table_entry)
+                    continue
+
                 try:
                     markdown = self.table_extractor.extract_table(crop_path)
                     if markdown and not markdown.startswith("⚠구조를 찾지 못했습니다"):
@@ -213,6 +222,19 @@ class LayoutOrderDebugPipeline:
 
     def _uses_direct_table_extraction(self) -> bool:
         return self.table_extraction_mode == "direct"
+
+    def _skips_table_extraction(self) -> bool:
+        return self.force_table_extraction_fallback or not self.table_extraction_enabled
+
+    def _table_extraction_skip_reason(self) -> str:
+        if self.force_table_extraction_fallback:
+            return "TABLE_EXTRACTION_FORCE_FALLBACK=true"
+        return "TABLE_EXTRACTION_ENABLED=false"
+
+    def _print_table_config(self) -> None:
+        print(f"[DebugPipeline] TABLE_EXTRACTION_MODE={self.table_extraction_mode}")
+        print(f"[DebugPipeline] TABLE_EXTRACTION_ENABLED={self.table_extraction_enabled}")
+        print(f"[DebugPipeline] TABLE_EXTRACTION_FORCE_FALLBACK={self.force_table_extraction_fallback}")
 
     def _release_vision_gpu_memory(self) -> None:
         try:
@@ -262,6 +284,13 @@ class LayoutOrderDebugPipeline:
                 print(f"[DebugPipeline] skipped temp cleanup: {image_path}")
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run the document pipeline and save debug artifacts for each pipeline and assembly stage."
@@ -282,7 +311,26 @@ def main() -> None:
         action="store_true",
         help="Skip markdown rendering and only save pipeline/assembly debug artifacts.",
     )
+    parser.add_argument(
+        "--skip-table-extraction",
+        action="store_true",
+        help="Skip table markdown extraction and render table crops as image fallbacks.",
+    )
+    parser.add_argument(
+        "--table-worker-timeout-seconds",
+        type=int,
+        default=None,
+        help="Override TABLE_EXTRACTION_WORKER_TIMEOUT_SECONDS for worker table extraction.",
+    )
     args = parser.parse_args()
+
+    if args.table_worker_timeout_seconds is not None and args.table_worker_timeout_seconds <= 0:
+        parser.error("--table-worker-timeout-seconds must be greater than 0")
+
+    if args.skip_table_extraction:
+        os.environ["TABLE_EXTRACTION_ENABLED"] = "false"
+    if args.table_worker_timeout_seconds is not None:
+        os.environ["TABLE_EXTRACTION_WORKER_TIMEOUT_SECONDS"] = str(args.table_worker_timeout_seconds)
 
     input_pdf = Path(args.input_pdf)
     if not input_pdf.is_absolute():
