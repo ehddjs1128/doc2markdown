@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from modules.assembly._common import AssemblyCommonMixin
+from modules.assembly.adapter_helpers import _merge_unique_ids, _normalize_text
 from modules.assembly.ir import (
     AssemblyElement,
     AssemblyMeta,
@@ -21,10 +21,10 @@ from modules.assembly.ir import (
     SectionNode,
     TableRef,
 )
-from modules.assembly.normalize_filter import NormalizeFilter
+from modules.assembly.stage_contracts import require_assembly_result, require_stage
 
 
-class StructureAssembler(AssemblyCommonMixin):
+class StructureAssembler:
     """읽기 순서가 확정된 block을 문서 구조 IR로 조립한다."""
 
     # R-ASM-09, R-ASM-10
@@ -57,14 +57,8 @@ class StructureAssembler(AssemblyCommonMixin):
     @classmethod
     def apply(cls, result: AssemblyResult) -> AssemblyResult:
         """reading order 결과를 section/list/paragraph/object 구조로 조립한다."""
-        if not isinstance(result, AssemblyResult):
-            return result
-
-        if cls._should_skip_structure(result.metadata.stage):
-            return result
-
-        if result.metadata.stage != "normalized":
-            result = NormalizeFilter.apply(result)
+        result = require_assembly_result(result, cls.__name__)
+        require_stage(result, "normalized", cls.__name__)
 
         ordered_elements = cls._ensure_reading_order(result.ordered_elements)
         next_relations = cls._build_next_relations(ordered_elements)
@@ -345,11 +339,6 @@ class StructureAssembler(AssemblyCommonMixin):
             metadata=cls._build_structure_metadata(result.metadata, structure_summary),
             raw=result.raw,
         )
-
-    @classmethod
-    def _should_skip_structure(cls, stage: Optional[str]) -> bool:
-        """이미 구조 조립 이후 단계면 그대로 반환한다."""
-        return stage in {"structure_assembled", "validated"}
 
     @classmethod
     def _ensure_reading_order(cls, elements: List[AssemblyElement]) -> List[AssemblyElement]:
@@ -899,7 +888,7 @@ class StructureAssembler(AssemblyCommonMixin):
         if llm_heading_level is not None:
             return llm_heading_level
 
-        text = cls._normalize_text(element.text) or ""
+        text = _normalize_text(element.text) or ""
 
         numeric_match = cls.NUMERIC_HEADING_PATTERN.match(text)
         if numeric_match:
@@ -928,7 +917,7 @@ class StructureAssembler(AssemblyCommonMixin):
         if cls._normalize_heading_level_hint(element.metadata.get("llm_heading_level")) is not None:
             return "llm_hint"
 
-        text = cls._normalize_text(element.text) or ""
+        text = _normalize_text(element.text) or ""
         if cls.NUMERIC_HEADING_PATTERN.match(text):
             return "numeric_pattern"
         if cls.PAREN_HEADING_PATTERN.match(text):
@@ -1004,7 +993,7 @@ class StructureAssembler(AssemblyCommonMixin):
         if abs(previous.bbox[0] - current.bbox[0]) > indent_tolerance:
             return False
 
-        previous_text = cls._normalize_text(previous.text) or ""
+        previous_text = _normalize_text(previous.text) or ""
         if previous_text.endswith(cls.TERMINAL_PUNCTUATION):
             return False
 
@@ -1089,7 +1078,7 @@ class StructureAssembler(AssemblyCommonMixin):
                 child_source_ids = cls._extract_node_source_block_ids(child)
                 aggregated_ids.extend(child_source_ids)
 
-            section.source_block_ids = cls._merge_unique_ids(aggregated_ids)
+            section.source_block_ids = _merge_unique_ids(aggregated_ids)
 
     @classmethod
     def _finalize_section_children(cls, children: List[Any]) -> List[Any]:
@@ -1199,7 +1188,7 @@ class StructureAssembler(AssemblyCommonMixin):
     @classmethod
     def _looks_like_caption_text(cls, text: Optional[str], object_kind: str) -> bool:
         """caption 패턴을 object 종류별로 느슨하게 확인한다."""
-        normalized = cls._normalize_text(text)
+        normalized = _normalize_text(text)
         if normalized is None:
             return False
 
@@ -1210,7 +1199,7 @@ class StructureAssembler(AssemblyCommonMixin):
     @classmethod
     def _looks_like_note_text(cls, text: Optional[str]) -> bool:
         """note 패턴을 보수적으로 확인한다."""
-        normalized = cls._normalize_text(text)
+        normalized = _normalize_text(text)
         if normalized is None:
             return False
         return bool(cls.NOTE_PATTERN.match(normalized))
@@ -1264,7 +1253,7 @@ class StructureAssembler(AssemblyCommonMixin):
     @classmethod
     def _is_ordered_list_item(cls, text: Optional[str]) -> bool:
         """ordered list marker를 간단히 판별한다."""
-        normalized = cls._normalize_text(text)
+        normalized = _normalize_text(text)
         if normalized is None:
             return False
         return bool(cls.ORDERED_LIST_PATTERN.match(normalized))
@@ -1272,7 +1261,7 @@ class StructureAssembler(AssemblyCommonMixin):
     @classmethod
     def _split_list_marker(cls, text: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         """list marker와 실제 item 본문을 분리한다."""
-        normalized = cls._normalize_text(text)
+        normalized = _normalize_text(text)
         if normalized is None:
             return None, None
 
@@ -1294,6 +1283,3 @@ class StructureAssembler(AssemblyCommonMixin):
     def _is_list_like_text(cls, text: str) -> bool:
         """문단 병합 중 list 시작 후보를 잘못 합치지 않게 막는다."""
         return bool(cls.ORDERED_LIST_PATTERN.match(text) or cls.UNORDERED_LIST_PATTERN.match(text))
-
-
-__all__ = ["StructureAssembler"]

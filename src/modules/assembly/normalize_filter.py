@@ -8,7 +8,7 @@ from math import ceil
 from statistics import median
 from typing import Any, Dict, List, Optional
 
-from modules.assembly._common import AssemblyCommonMixin
+from modules.assembly.adapter_helpers import _normalize_float, _normalize_text
 from modules.assembly.ir import (
     AssemblyElement,
     AssemblyMeta,
@@ -19,9 +19,10 @@ from modules.assembly.ir import (
     PageStats,
     TableRef,
 )
+from modules.assembly.stage_contracts import require_assembly_result, require_stage
 
 
-class NormalizeFilter(AssemblyCommonMixin):
+class NormalizeFilter:
     """adapter seed 결과를 reading order 직전 상태로 정리한다."""
 
     # R-ASM-01, R-ASM-02에 대응하는 margin 영역 비율
@@ -60,11 +61,8 @@ class NormalizeFilter(AssemblyCommonMixin):
     @classmethod
     def apply(cls, result: AssemblyResult) -> AssemblyResult:
         """adapter seed 결과를 정규화하고 필터링한다."""
-        if not isinstance(result, AssemblyResult):
-            return result
-
-        if cls._should_skip_normalize(result.metadata.stage):
-            return result
+        result = require_assembly_result(result, cls.__name__)
+        require_stage(result, "adapter_seed", cls.__name__)
 
         # R-ASM-01, R-ASM-02, R-ASM-03의 판정에 공통으로 쓰일
         # page 기준값을 먼저 정리한다.
@@ -133,15 +131,6 @@ class NormalizeFilter(AssemblyCommonMixin):
         )
 
     @classmethod
-    def _should_skip_normalize(cls, stage: Optional[str]) -> bool:
-        """이미 normalize 이후 단계면 다시 처리하지 않는다."""
-        return stage in {
-            "normalized",
-            "structure_assembled",
-            "validated",
-        }
-
-    @classmethod
     def _empty_filter_buckets(cls) -> Dict[str, List[str]]:
         """후속 디버깅을 위한 기본 필터 버킷을 만든다."""
         return {
@@ -162,7 +151,7 @@ class NormalizeFilter(AssemblyCommonMixin):
     ) -> tuple[Optional[AssemblyElement], Optional[str]]:
         """개별 element를 정규화하고 제외 여부를 판정한다."""
         metadata = dict(element.metadata)
-        normalized_text = cls._normalize_text(element.text)
+        normalized_text = _normalize_text(element.text)
         if normalized_text != element.text:
             metadata["text_normalized"] = True
 
@@ -274,7 +263,7 @@ class NormalizeFilter(AssemblyCommonMixin):
             if element.kind in cls.OBJECT_LIKE_KINDS or element.bbox is None:
                 continue
 
-            text = cls._normalize_text(element.text)
+            text = _normalize_text(element.text)
             if text is None:
                 continue
 
@@ -340,7 +329,7 @@ class NormalizeFilter(AssemblyCommonMixin):
     @classmethod
     def _fingerprint_margin_text(cls, text: str) -> Optional[str]:
         """페이지 번호 차이만 무시하고 반복 텍스트를 비교한다."""
-        normalized = cls._normalize_text(text)
+        normalized = _normalize_text(text)
         if normalized is None:
             return None
 
@@ -444,8 +433,8 @@ class NormalizeFilter(AssemblyCommonMixin):
             dimension = page_dimensions.get(page, {})
             page_elements = elements_by_page.get(page, [])
 
-            width = current.width if current.width is not None else cls._normalize_float(dimension.get("width"))
-            height = current.height if current.height is not None else cls._normalize_float(dimension.get("height"))
+            width = current.width if current.width is not None else _normalize_float(dimension.get("width"))
+            height = current.height if current.height is not None else _normalize_float(dimension.get("height"))
 
             median_line_height = current.median_line_height
             if median_line_height is None:
@@ -658,6 +647,3 @@ class NormalizeFilter(AssemblyCommonMixin):
             source=previous_metadata.source,
             details=details,
         )
-
-
-__all__ = ["NormalizeFilter"]

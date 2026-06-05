@@ -11,20 +11,16 @@ from typing import Any
 
 from modules.assembly.ir import (
     AssemblyElement,
-    AssemblyMeta,
     AssemblyResult,
-    AssemblyWarning,
-    AssembledDocument,
-    BlockRelation,
     FigureRef,
     ListGroup,
     ListGroupItem,
     NoteRef,
-    PageStats,
     ParagraphGroup,
     SectionNode,
     TableRef,
 )
+from modules.assembly.serialization import assembly_result_from_dict
 from modules.rendering.ir import MarkdownRenderResult, RenderStats, RenderWarning
 
 
@@ -106,6 +102,7 @@ class MarkdownRenderer:
             return ""
 
         def replace_image_path(match: re.Match[str]) -> str:
+            """Markdown image URL 하나를 출력 파일 기준 상대 경로로 바꾼다."""
             alt_text = match.group("alt")
             original_path = match.group("path")
             rewritten_path = cls._to_markdown_relative_path(
@@ -159,7 +156,7 @@ class MarkdownRenderer:
             return value
 
         if isinstance(value, Mapping):
-            return cls._assembly_result_from_dict(dict(value))
+            return assembly_result_from_dict(value)
 
         raise TypeError(
             "MarkdownRenderer는 AssemblyResult(stage='validated') 또는 그 직렬화 dict만 받습니다."
@@ -820,278 +817,3 @@ class MarkdownRenderer:
             "target_note_map": target_note_map,
             "rendered_attached_note_ids": set(),
         }
-
-    @classmethod
-    def _assembly_result_from_dict(cls, data: dict[str, Any]) -> AssemblyResult:
-        """직렬화 dict를 AssemblyResult로 복원한다."""
-        return AssemblyResult(
-            ordered_elements=[
-                cls._assembly_element_from_dict(item)
-                for item in cls._coerce_list(data.get("ordered_elements"))
-            ],
-            block_relations=[
-                cls._block_relation_from_dict(item)
-                for item in cls._coerce_list(data.get("block_relations"))
-            ],
-            document=cls._document_from_dict(cls._coerce_dict(data.get("document"))),
-            page_stats=[
-                cls._page_stats_from_dict(item)
-                for item in cls._coerce_list(data.get("page_stats"))
-            ],
-            warnings=[
-                cls._assembly_warning_from_dict(item)
-                for item in cls._coerce_list(data.get("warnings"))
-            ],
-            metadata=cls._meta_from_dict(cls._coerce_dict(data.get("metadata"))),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _document_from_dict(cls, data: dict[str, Any]) -> AssembledDocument:
-        """AssembledDocument dict를 복원한다."""
-        return AssembledDocument(
-            title_candidate=data.get("title_candidate"),
-            title_source_block_ids=list(data.get("title_source_block_ids") or []),
-            children=[
-                cls._assembled_node_from_dict(item)
-                for item in cls._coerce_list(data.get("children"))
-            ],
-            sections=[
-                cls._section_node_from_dict(item)
-                for item in cls._coerce_list(data.get("sections"))
-            ],
-            table_refs=[
-                cls._table_ref_from_dict(item)
-                for item in cls._coerce_list(data.get("table_refs"))
-            ],
-            figure_refs=[
-                cls._figure_ref_from_dict(item)
-                for item in cls._coerce_list(data.get("figure_refs"))
-            ],
-            note_refs=[
-                cls._note_ref_from_dict(item)
-                for item in cls._coerce_list(data.get("note_refs"))
-            ],
-            figure_assets_metadata=dict(data.get("figure_assets_metadata") or {}),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _assembled_node_from_dict(cls, data: dict[str, Any]) -> Any:
-        """children 안의 조립 노드를 type 기준으로 복원한다."""
-        node_type = data.get("type")
-
-        if node_type == "section":
-            return cls._section_node_from_dict(data)
-        if node_type == "paragraph_group":
-            return cls._paragraph_group_from_dict(data)
-        if node_type == "list_group":
-            return cls._list_group_from_dict(data)
-        if node_type == "table_ref":
-            return cls._table_ref_from_dict(data)
-        if node_type == "figure_ref":
-            return cls._figure_ref_from_dict(data)
-        if node_type == "note_ref":
-            return cls._note_ref_from_dict(data)
-
-        raise ValueError(f"알 수 없는 assembled node type입니다: {node_type!r}")
-
-    @classmethod
-    def _section_node_from_dict(cls, data: dict[str, Any]) -> SectionNode:
-        """section 노드를 재귀적으로 복원한다."""
-        return SectionNode(
-            type="section",
-            id=str(data.get("id", "")),
-            level=data.get("level"),
-            title=data.get("title"),
-            heading_block_id=data.get("heading_block_id"),
-            source_block_ids=list(data.get("source_block_ids") or []),
-            children=[
-                cls._assembled_node_from_dict(item)
-                for item in cls._coerce_list(data.get("children"))
-            ],
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _paragraph_group_from_dict(cls, data: dict[str, Any]) -> ParagraphGroup:
-        """paragraph_group 노드를 복원한다."""
-        return ParagraphGroup(
-            type="paragraph_group",
-            id=str(data.get("id", "")),
-            block_ids=list(data.get("block_ids") or []),
-            text=data.get("text"),
-            source_block_ids=list(data.get("source_block_ids") or []),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _list_group_from_dict(cls, data: dict[str, Any]) -> ListGroup:
-        """list_group 노드를 복원한다."""
-        return ListGroup(
-            type="list_group",
-            id=str(data.get("id", "")),
-            ordered=data.get("ordered"),
-            items=[
-                cls._list_group_item_from_dict(item)
-                for item in cls._coerce_list(data.get("items"))
-            ],
-            source_block_ids=list(data.get("source_block_ids") or []),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _list_group_item_from_dict(cls, data: dict[str, Any]) -> ListGroupItem:
-        """list_group item을 복원한다."""
-        return ListGroupItem(
-            block_ids=list(data.get("block_ids") or []),
-            text=data.get("text"),
-            source_block_ids=list(data.get("source_block_ids") or []),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _table_ref_from_dict(cls, data: dict[str, Any]) -> TableRef:
-        """table_ref 노드를 복원한다."""
-        return TableRef(
-            table_id=str(data.get("table_id", "")),
-            page=int(data.get("page", 1)),
-            type="table_ref",
-            bbox=cls._bbox_from_value(data.get("bbox")),
-            caption_id=data.get("caption_id"),
-            note_ids=list(data.get("note_ids") or []),
-            source_block_ids=list(data.get("source_block_ids") or []),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _figure_ref_from_dict(cls, data: dict[str, Any]) -> FigureRef:
-        """figure_ref 노드를 복원한다."""
-        return FigureRef(
-            figure_id=str(data.get("figure_id", "")),
-            page=int(data.get("page", 1)),
-            type="figure_ref",
-            bbox=cls._bbox_from_value(data.get("bbox")),
-            caption_id=data.get("caption_id"),
-            asset_path=data.get("asset_path"),
-            source_block_ids=list(data.get("source_block_ids") or []),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _note_ref_from_dict(cls, data: dict[str, Any]) -> NoteRef:
-        """note_ref 노드를 복원한다."""
-        return NoteRef(
-            note_id=str(data.get("note_id", "")),
-            page=int(data.get("page", 1)),
-            type="note_ref",
-            bbox=cls._bbox_from_value(data.get("bbox")),
-            text=data.get("text"),
-            target_id=data.get("target_id"),
-            source_block_ids=list(data.get("source_block_ids") or []),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _assembly_element_from_dict(cls, data: dict[str, Any]) -> AssemblyElement:
-        """ordered element를 복원한다."""
-        return AssemblyElement(
-            id=str(data.get("id", "")),
-            page=int(data.get("page", 1)),
-            kind=data.get("kind", "text"),
-            bbox=cls._bbox_from_value(data.get("bbox")),
-            text=data.get("text"),
-            label=data.get("label"),
-            confidence=data.get("confidence"),
-            column_id=data.get("column_id"),
-            reading_order=data.get("reading_order"),
-            parent_id=data.get("parent_id"),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _block_relation_from_dict(cls, data: dict[str, Any]) -> BlockRelation:
-        """block relation을 복원한다."""
-        return BlockRelation(
-            type=data.get("type", "next"),
-            src=str(data.get("src", "")),
-            dst=str(data.get("dst", "")),
-            score=data.get("score"),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _page_stats_from_dict(cls, data: dict[str, Any]) -> PageStats:
-        """page 통계를 복원한다."""
-        return PageStats(
-            page=int(data.get("page", 1)),
-            width=data.get("width"),
-            height=data.get("height"),
-            median_line_height=data.get("median_line_height"),
-            body_font_size=data.get("body_font_size"),
-            column_count=data.get("column_count"),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _assembly_warning_from_dict(cls, data: dict[str, Any]) -> AssemblyWarning:
-        """assembly warning을 복원한다."""
-        return AssemblyWarning(
-            code=data.get("code", "missing_geometry"),
-            message=data.get("message", ""),
-            level=data.get("level", "warning"),
-            page=data.get("page"),
-            element_ids=list(data.get("element_ids") or []),
-            metadata=dict(data.get("metadata") or {}),
-            raw=data.get("raw"),
-        )
-
-    @classmethod
-    def _meta_from_dict(cls, data: dict[str, Any]) -> AssemblyMeta:
-        """assembly metadata를 복원한다."""
-        return AssemblyMeta(
-            stage=data.get("stage"),
-            adapter=data.get("adapter"),
-            source=data.get("source"),
-            details=dict(data.get("details") or {}),
-        )
-
-    @staticmethod
-    def _coerce_dict(value: Any) -> dict[str, Any]:
-        """dict가 아니면 빈 dict로 정규화한다."""
-        if isinstance(value, Mapping):
-            return dict(value)
-        return {}
-
-    @staticmethod
-    def _coerce_list(value: Any) -> list[dict[str, Any]]:
-        """list가 아니면 빈 list로 정규화한다."""
-        if not isinstance(value, list):
-            return []
-        return [dict(item) for item in value if isinstance(item, Mapping)]
-
-    @staticmethod
-    def _bbox_from_value(value: Any) -> tuple[float, float, float, float] | None:
-        """bbox list를 tuple로 정규화한다."""
-        if not isinstance(value, (list, tuple)) or len(value) != 4:
-            return None
-        return (
-            float(value[0]),
-            float(value[1]),
-            float(value[2]),
-            float(value[3]),
-        )
-
-
-__all__ = ["MarkdownRenderer"]

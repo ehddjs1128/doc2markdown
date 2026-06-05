@@ -11,12 +11,8 @@ from dotenv import load_dotenv
 from modules.ingestion import FilePreProcessor
 from modules.vision_engine import LayoutAnalyzer
 from modules.text_extractor import TextExtractor
-from modules.assembler import DocumentAssembler
-from modules.renderer import MarkdownRenderer
-from modules.assembly.adapters import AssemblyInputAdapter
-from modules.assembly.normalize_filter import NormalizeFilter
-from modules.assembly.structure import StructureAssembler
-from modules.assembly.validator import AssemblyValidator
+from modules.assembly.service import DocumentAssembler
+from modules.rendering.service import MarkdownRenderer
 from modules.llm_core import LLMConfig
 from modules.llm_enrichment import ContentEnricher, SemanticEnricher
 
@@ -51,14 +47,16 @@ class DocumentToMarkdownPipeline:
         self.output_base_dir = self.project_root / "data" / "output"
         self.temp_dir = self.project_root / "data" / "temp"
         self.table_extraction_mode = os.getenv("TABLE_EXTRACTION_MODE", "direct").strip().lower()
+        self.force_table_extraction_fallback = _env_bool("TABLE_EXTRACTION_FORCE_FALLBACK")
 
         self.preprocessor = preprocessor or FilePreProcessor(temp_dir=str(self.temp_dir))
         self.vision_engine = vision_engine or LayoutAnalyzer(output_base_dir=str(self.output_base_dir))
         self.text_extractor = text_extractor or TextExtractor()
-        self.table_extractor = table_extractor or self._create_table_extractor()
+        self.table_extractor = None if self.force_table_extraction_fallback else table_extractor or self._create_table_extractor()
         self.assembler = assembler or DocumentAssembler()
         self.renderer = renderer or MarkdownRenderer()
         self.llm_config = LLMConfig.from_env()
+        self._print_table_config()
         self._print_llm_config()
         self.semantic_enricher = semantic_enricher or SemanticEnricher(config=self.llm_config)
         self.content_enricher = content_enricher or ContentEnricher(config=self.llm_config)
@@ -150,6 +148,12 @@ class DocumentToMarkdownPipeline:
                 }
 
                 print(f"[Pipeline] 표 추출 시작: {table_id}")
+                if self.force_table_extraction_fallback:
+                    table_entry["extraction_error"] = "TABLE_EXTRACTION_FORCE_FALLBACK=true"
+                    print(f"[Pipeline] table extraction forced fallback: {table_id}")
+                    table_results.append(table_entry)
+                    continue
+
                 try:
                     markdown = self.table_extractor.extract_table(crop_path)
                     if markdown and not markdown.startswith("표 구조를 찾지 못했습니다."):
@@ -170,11 +174,11 @@ class DocumentToMarkdownPipeline:
         """선택형 로컬 LLM 보강 단계를 포함한 Assembly IR 생성."""
         seed_result = self._run_assembly_stage(
             "adapter_seed",
-            lambda: AssemblyInputAdapter.from_outputs(layout_result, table_result),
+            lambda: self.assembler.build_seed_from_outputs(layout_result, table_result),
         )
         normalized_result = self._run_assembly_stage(
             "NormalizeFilter",
-            lambda: NormalizeFilter.apply(seed_result),
+            lambda: self.assembler.normalize(seed_result),
         )
 
         if self.llm_config.runs_semantic():
@@ -188,7 +192,7 @@ class DocumentToMarkdownPipeline:
 
         structure_result = self._run_assembly_stage(
             "StructureAssembler",
-            lambda: StructureAssembler.apply(semantic_result),
+            lambda: self.assembler.assemble_structure(semantic_result),
         )
 
         if self.llm_config.runs_content():
@@ -202,7 +206,7 @@ class DocumentToMarkdownPipeline:
 
         return self._run_assembly_stage(
             "AssemblyValidator",
-            lambda: AssemblyValidator.apply(content_result),
+            lambda: self.assembler.validate(content_result),
         )
 
     def _build_table_id(self, page_num: int, raw_element_id: Any) -> str:
@@ -239,6 +243,10 @@ class DocumentToMarkdownPipeline:
     def _uses_direct_table_extraction(self) -> bool:
         """표 추출의 현재 프로세스 직접 실행 여부 반환."""
         return self.table_extraction_mode == "direct"
+
+    def _print_table_config(self) -> None:
+        print(f"[Pipeline] TABLE_EXTRACTION_MODE={self.table_extraction_mode}")
+        print(f"[Pipeline] TABLE_EXTRACTION_FORCE_FALLBACK={self.force_table_extraction_fallback}")
 
     def _run_assembly_stage(self, label: str, action: Callable[[], Any]) -> Any:
         """Assembly 세부 단계 실행 로그 출력."""
@@ -364,6 +372,10 @@ class DocumentToMarkdownPipeline:
             return [self._strip_raw_fields(item) for item in value]
 
         return value
+
+
+def _env_bool(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 if __name__ == "__main__":

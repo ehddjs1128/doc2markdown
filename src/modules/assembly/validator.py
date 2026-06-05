@@ -7,7 +7,7 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Any, DefaultDict, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from modules.assembly._common import AssemblyCommonMixin
+from modules.assembly.adapter_helpers import _merge_unique_ids, _normalize_int
 from modules.assembly.ir import (
     AssemblyElement,
     AssemblyMeta,
@@ -22,10 +22,10 @@ from modules.assembly.ir import (
     TableRef,
 )
 from modules.assembly.normalize_filter import NormalizeFilter
-from modules.assembly.structure import StructureAssembler
+from modules.assembly.stage_contracts import require_assembly_result, require_stage
 
 
-class AssemblyValidator(AssemblyCommonMixin):
+class AssemblyValidator:
     """structure 결과를 최종 점검하고 warning을 남긴다."""
 
     LOW_CONF_THRESHOLD = NormalizeFilter.LOW_CONF_THRESHOLD
@@ -47,14 +47,8 @@ class AssemblyValidator(AssemblyCommonMixin):
     @classmethod
     def apply(cls, result: AssemblyResult) -> AssemblyResult:
         """구조 조립 결과를 검증하고 `validated` stage로 마감한다."""
-        if not isinstance(result, AssemblyResult):
-            return result
-
-        if cls._should_skip_validation(result.metadata.stage):
-            return result
-
-        if result.metadata.stage != "structure_assembled":
-            result = StructureAssembler.apply(result)
+        result = require_assembly_result(result, cls.__name__)
+        require_stage(result, "structure_assembled", cls.__name__)
 
         added_warnings = cls._collect_validation_warnings(result)
         merged_warnings = cls._merge_warnings(result.warnings, added_warnings)
@@ -80,11 +74,6 @@ class AssemblyValidator(AssemblyCommonMixin):
             metadata=cls._build_validated_metadata(result.metadata, validation_summary),
             raw=result.raw,
         )
-
-    @classmethod
-    def _should_skip_validation(cls, stage: Optional[str]) -> bool:
-        """이미 검증이 끝난 결과라면 그대로 반환한다."""
-        return stage == "validated"
 
     @classmethod
     def _collect_validation_warnings(cls, result: AssemblyResult) -> List[AssemblyWarning]:
@@ -196,7 +185,7 @@ class AssemblyValidator(AssemblyCommonMixin):
         if not missing_pairs and not extra_pairs and not duplicate_pairs:
             return []
 
-        element_ids = cls._merge_unique_ids(
+        element_ids = _merge_unique_ids(
             [src for src, _ in missing_pairs],
             [dst for _, dst in missing_pairs],
             [src for src, _ in extra_pairs],
@@ -631,8 +620,8 @@ class AssemblyValidator(AssemblyCommonMixin):
                     code="empty_section",
                     message="body 없이 heading만 남은 section이 있습니다.",
                     level="warning",
-                    page=cls._normalize_int(section.metadata.get("page")),
-                    element_ids=cls._merge_unique_ids(section.heading_block_id, section.source_block_ids),
+                    page=_normalize_int(section.metadata.get("page")),
+                    element_ids=_merge_unique_ids(section.heading_block_id, section.source_block_ids),
                     metadata={
                         "section_id": section.id,
                         "title": section.title,
@@ -758,30 +747,30 @@ class AssemblyValidator(AssemblyCommonMixin):
 
         for node in nodes:
             if isinstance(node, SectionNode):
-                source_ids.update(cls._merge_unique_ids(node.heading_block_id, node.source_block_ids))
+                source_ids.update(_merge_unique_ids(node.heading_block_id, node.source_block_ids))
                 source_ids.update(cls._collect_source_ids_from_nodes(node.children))
                 continue
 
             if isinstance(node, ParagraphGroup):
-                source_ids.update(cls._merge_unique_ids(node.block_ids, node.source_block_ids))
+                source_ids.update(_merge_unique_ids(node.block_ids, node.source_block_ids))
                 continue
 
             if isinstance(node, ListGroup):
-                source_ids.update(cls._merge_unique_ids(node.source_block_ids))
+                source_ids.update(_merge_unique_ids(node.source_block_ids))
                 for item in node.items:
-                    source_ids.update(cls._merge_unique_ids(item.block_ids, item.source_block_ids))
+                    source_ids.update(_merge_unique_ids(item.block_ids, item.source_block_ids))
                 continue
 
             if isinstance(node, TableRef):
-                source_ids.update(cls._merge_unique_ids(node.table_id, node.source_block_ids))
+                source_ids.update(_merge_unique_ids(node.table_id, node.source_block_ids))
                 continue
 
             if isinstance(node, FigureRef):
-                source_ids.update(cls._merge_unique_ids(node.figure_id, node.source_block_ids))
+                source_ids.update(_merge_unique_ids(node.figure_id, node.source_block_ids))
                 continue
 
             if isinstance(node, NoteRef):
-                source_ids.update(cls._merge_unique_ids(node.note_id, node.source_block_ids))
+                source_ids.update(_merge_unique_ids(node.note_id, node.source_block_ids))
                 continue
 
         return source_ids
@@ -902,6 +891,3 @@ class AssemblyValidator(AssemblyCommonMixin):
             source=previous_metadata.source,
             details=details,
         )
-
-
-__all__ = ["AssemblyValidator"]
