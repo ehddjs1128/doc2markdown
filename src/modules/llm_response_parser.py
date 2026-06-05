@@ -161,15 +161,3 @@ def _normalize_float(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return normalized if math.isfinite(normalized) else 0.0
-
-
-__all__ = [
-    "ALLOWED_SEMANTIC_KINDS",
-    "CaptionLink",
-    "ContentRepair",
-    "ParsedSemanticResponse",
-    "SemanticDecision",
-    "parse_content_repair",
-    "parse_content_repairs",
-    "parse_semantic_response",
-]

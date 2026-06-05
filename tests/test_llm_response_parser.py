@@ -1,12 +1,6 @@
-import sys
 import unittest
-from pathlib import Path
 
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
-SRC_DIR = ROOT_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+from tests import _helpers  # noqa: F401
 
 from modules.llm_response_parser import parse_content_repair, parse_content_repairs, parse_semantic_response
 

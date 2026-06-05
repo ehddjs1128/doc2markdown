@@ -1,12 +1,6 @@
-import sys
 import unittest
-from pathlib import Path
 
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
-SRC_DIR = ROOT_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+from tests._helpers import FakeLLMClient
 
 from modules.assembly.ir import (
     AssemblyElement,
@@ -19,23 +13,6 @@ from modules.assembly.ir import (
 )
 from modules.llm_core import LLMConfig
 from modules.llm_enrichment import ContentEnricher, SemanticEnricher
-
-
-class FakeLLMClient:
-    def __init__(self, responses):
-        self.responses = responses
-        self.calls = []
-
-    @property
-    def model_id(self):
-        return "fake-local-llm"
-
-    def generate_json(self, task, payload):
-        self.calls.append((task, payload))
-        response = self.responses.get(task, {})
-        if isinstance(response, Exception):
-            raise response
-        return response
 
 
 def enabled_config(mode):
