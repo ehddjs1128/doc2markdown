@@ -175,7 +175,7 @@ class DocumentAssembler:
     ) -> AssemblyResult:
         if not self._is_enricher_enabled(enricher, enabled_method_name):
             mode = self._enricher_mode(enricher)
-            print(f"[Assembly] {label} skipped: mode={mode}")
+            print(f"[Assembly] {label} 건너뜀: mode={mode}")
             return enricher.apply(result)
 
         enriched_result = self._run_stage(label, lambda: enricher.apply(result))
@@ -196,7 +196,7 @@ class DocumentAssembler:
         return str(getattr(config, "mode", "unknown"))
 
     def _run_stage(self, label: str, action: Callable[[], AssemblyResult]) -> AssemblyResult:
-        print(f"[Assembly] {label} start")
+        print(f"[Assembly] {label} 시작")
         started_at = time.perf_counter()
         result = action()
         self._print_stage_summary(label, result, started_at)
@@ -212,7 +212,7 @@ class DocumentAssembler:
         document = getattr(result, "document", None)
 
         print(
-            f"[Assembly] {label} done: "
+            f"[Assembly] {label} 완료: "
             f"stage={stage}, elements={len(elements)}, warnings={len(warnings)}, elapsed={elapsed:.2f}s"
         )
         if document is None:
@@ -223,7 +223,7 @@ class DocumentAssembler:
         table_refs = getattr(document, "table_refs", []) or []
         figure_refs = getattr(document, "figure_refs", []) or []
         print(
-            f"[Assembly] {label} document: "
+            f"[Assembly] {label} 문서: "
             f"children={len(children)}, sections={len(sections)}, "
             f"tables={len(table_refs)}, figures={len(figure_refs)}"
         )

@@ -66,16 +66,16 @@ class DocumentToMarkdownPipeline:
         resolved_file_path = Path(file_path).resolve()
         output_dir = self._get_output_dir(resolved_file_path)
 
-        print(f"▶ 파이프라인 시작: {resolved_file_path}")
+        print(f"[Pipeline] 시작: {resolved_file_path}")
 
-        print("▶ [Step 1] 문서 전처리 중...")
+        print("[Pipeline] 1/6 입력 전처리")
         raw_pages = self.preprocessor.process(str(resolved_file_path))
 
-        print("▶ [Step 2] 레이아웃 분석 중...")
+        print("[Pipeline] 2/6 레이아웃 분석")
         layout_result = self.vision_engine.analyze(raw_pages)
         self._release_vision_gpu_memory()
 
-        print("▶ [Step 3] 텍스트 추출 중...")
+        print("[Pipeline] 3/6 텍스트 추출")
         try:
             extracted_result = self.text_extractor.extract_text(layout_result, str(resolved_file_path))
         finally:
@@ -83,18 +83,18 @@ class DocumentToMarkdownPipeline:
                 self.text_extractor.release_model()
         self._save_json(output_dir / "metadata.json", extracted_result)
 
-        print("▶ [Step 4] 표 Markdown 변환 중...")
+        print("[Pipeline] 4/6 표 Markdown 변환")
         table_result = self._build_table_results(extracted_result)
         if hasattr(self.table_extractor, "release_model"):
             self.table_extractor.release_model()
         self._save_json(output_dir / "table_results.json", table_result)
 
-        print("[Pipeline] Step 5/6 Assembly IR build + LLM enrichment")
+        print("[Pipeline] 5/6 Assembly IR build + LLM enrich")
         assembly_result = self._build_assembly_ir(extracted_result, table_result)
         assembly_result_dict = self._serialize(assembly_result)
         self._save_json(output_dir / "assembly_result.json", assembly_result_dict)
 
-        print("▶ Assembly IR 생성 완료!")
+        print("[Pipeline] Assembly IR 완료")
         return {
             "status": "success",
             "file_path": str(resolved_file_path),
@@ -112,7 +112,7 @@ class DocumentToMarkdownPipeline:
 
         self._save_json(Path(result["output_dir"]) / "pipeline_result.json", result)
         self._cleanup_temp_images(self._collect_temp_image_paths(result["layout_result"]))
-        print("▶ 파이프라인 변환 완료!")
+        print("[Pipeline] 완료")
         return result
 
     def _build_table_results(self, layout_result: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -149,13 +149,13 @@ class DocumentToMarkdownPipeline:
                     markdown = self.table_extractor.extract_table(crop_path)
                     if markdown and not markdown.startswith("표 구조를 찾지 못했습니다."):
                         table_entry["markdown"] = markdown
-                        print(f"[Pipeline] 표 추출 완료: {table_id}")
+                        print(f"[Pipeline][Table] 추출 완료: {table_id}")
                     else:
                         table_entry["extraction_error"] = markdown
-                        print(f"[Pipeline] 표 추출 실패: {table_id}")
+                        print(f"[Pipeline][Table] 추출 실패: {table_id}")
                 except Exception as error:
                     table_entry["extraction_error"] = str(error)
-                    print(f"[Pipeline] 표 추출 실패: {table_id}")
+                    print(f"[Pipeline][Table] 추출 실패: {table_id}")
 
                 table_results.append(table_entry)
 
@@ -177,7 +177,7 @@ class DocumentToMarkdownPipeline:
             result["saved_paths"] = {}
             return
 
-        print("[Pipeline] Step 6/6 Markdown rendering")
+        print("[Pipeline] 6/6 Markdown rendering")
         output_dir = Path(result["output_dir"])
         markdown_result = self.renderer.render(result["assembly_result"])
         saved_paths = self.renderer.save(markdown_result, output_dir=output_dir)
@@ -207,11 +207,9 @@ class DocumentToMarkdownPipeline:
     def _create_table_extractor(self):
         """환경변수 기준 표 추출 실행 방식 선택."""
         if self._uses_direct_table_extraction():
-            print("[Pipeline] TABLE_EXTRACTION_MODE=direct")
             table_module = import_module("modules.Table_to_markdown")
             return table_module.TableExtractor()
 
-        print("[Pipeline] TABLE_EXTRACTION_MODE=worker")
         table_module = import_module("modules.table_extractor")
         return table_module.TableExtractor()
 
@@ -235,16 +233,16 @@ class DocumentToMarkdownPipeline:
     def _print_llm_config(self) -> None:
         """로컬 LLM 후처리 설정 로그 출력."""
         if not self.llm_config.uses_enrichment():
-            print("[Pipeline] LLM enrichment disabled: baseline")
+            print("[Pipeline][Config] LLM_ENRICHMENT_MODE=baseline (disabled)")
             return
 
-        print(f"[Pipeline] LLM_ENRICHMENT_MODE={self.llm_config.mode}")
-        print(f"[Pipeline] LOCAL_LLM_MODEL_ID={self.llm_config.model_id}")
-        print(f"[Pipeline] LLM_MAX_NEW_TOKENS={self.llm_config.max_new_tokens}")
-        print(f"[Pipeline] LLM_SEMANTIC_MAX_NEW_TOKENS={self.llm_config.max_new_tokens_for_task('semantic_enrichment')}")
-        print(f"[Pipeline] LLM_CONTENT_MAX_NEW_TOKENS={self.llm_config.max_new_tokens_for_task('content_repair')}")
-        print(f"[Pipeline] LLM_CONTENT_BATCH_SIZE={self.llm_config.content_batch_size}")
-        print(f"[Pipeline] LLM_CONTENT_MIN_CHARS={self.llm_config.content_min_chars}")
+        print(f"[Pipeline][Config] LLM_ENRICHMENT_MODE={self.llm_config.mode}")
+        print(f"[Pipeline][Config] LOCAL_LLM_MODEL_ID={self.llm_config.model_id}")
+        print(f"[Pipeline][Config] LLM_MAX_NEW_TOKENS={self.llm_config.max_new_tokens}")
+        print(f"[Pipeline][Config] LLM_SEMANTIC_MAX_NEW_TOKENS={self.llm_config.max_new_tokens_for_task('semantic_enrichment')}")
+        print(f"[Pipeline][Config] LLM_CONTENT_MAX_NEW_TOKENS={self.llm_config.max_new_tokens_for_task('content_repair')}")
+        print(f"[Pipeline][Config] LLM_CONTENT_BATCH_SIZE={self.llm_config.content_batch_size}")
+        print(f"[Pipeline][Config] LLM_CONTENT_MIN_CHARS={self.llm_config.content_min_chars}")
 
     def _save_json(self, path: Path, payload: Any) -> None:
         """UTF-8 JSON 파일 저장."""
@@ -338,4 +336,4 @@ if __name__ == "__main__":
     if sample_file.exists():
         pipeline.run(str(sample_file))
     else:
-        print(f"샘플 파일을 찾을 수 없습니다: {sample_file}")
+        print(f"[Pipeline] 샘플 파일을 찾을 수 없습니다: {sample_file}")
