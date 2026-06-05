@@ -19,3 +19,4 @@ def require_stage(result: AssemblyResult, expected_stage: AssemblyStage, owner: 
             f"{owner} expects AssemblyResult(stage={expected_stage!r}), "
             f"got stage={actual_stage!r}."
         )
+

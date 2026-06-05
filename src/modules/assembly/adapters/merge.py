@@ -4,16 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from modules.assembly.adapter_helpers import (
-    _bbox_iou,
-    _build_adapter_metadata,
-    _merge_ref_list,
-    _merge_unique_ids,
-    _normalize_str,
-)
+from modules.assembly.adapters.helpers import _build_adapter_metadata, _merge_ref_list
+from modules.assembly.common.geometry import bbox_iou
+from modules.assembly.common.values import merge_unique_ids, normalize_str
 from modules.assembly.ir import AssemblyResult, AssembledDocument, TableRef
-from modules.assembly.layout_adapter import _resolve_layout_source, from_layout_output
-from modules.assembly.table_adapter import _resolve_table_source, from_table_output
+from modules.assembly.adapters.layout import _resolve_layout_source, from_layout_output
+from modules.assembly.adapters.table import _resolve_table_source, from_table_output
 from modules.assembly.types import (
     FIGURE_REF_ID_ATTR,
     MERGED_METADATA_LAYOUT_KEY,
@@ -164,14 +160,14 @@ def _match_layout_table_ref(
             if table_source_ids.intersection(candidate.source_block_ids):
                 return candidate, "source_block_id"
 
-    table_image_path = _normalize_str(
+    table_image_path = normalize_str(
         table_ref.metadata.get("crop_path")
         or table_ref.metadata.get("image_path")
         or table_ref.metadata.get("table_image_path")
     )
     if table_image_path is not None:
         for candidate in layout_candidates:
-            candidate_image_path = _normalize_str(
+            candidate_image_path = normalize_str(
                 candidate.metadata.get("crop_path")
                 or candidate.metadata.get("image_path")
                 or candidate.metadata.get("table_image_path")
@@ -185,7 +181,7 @@ def _match_layout_table_ref(
         for candidate in layout_candidates:
             if candidate.page != table_ref.page:
                 continue
-            iou = _bbox_iou(candidate.bbox, table_ref.bbox) or 0.0
+            iou = bbox_iou(candidate.bbox, table_ref.bbox) or 0.0
             if iou > best_score:
                 best_candidate = candidate
                 best_score = iou
@@ -227,8 +223,8 @@ def _merge_linked_table_ref(
         page=layout_ref.page,
         bbox=layout_ref.bbox or table_ref.bbox,
         caption_id=table_ref.caption_id or layout_ref.caption_id,
-        note_ids=_merge_unique_ids(layout_ref.note_ids, table_ref.note_ids),
-        source_block_ids=_merge_unique_ids(
+        note_ids=merge_unique_ids(layout_ref.note_ids, table_ref.note_ids),
+        source_block_ids=merge_unique_ids(
             layout_ref.source_block_ids or [layout_ref.table_id],
             table_ref.source_block_ids,
         ),

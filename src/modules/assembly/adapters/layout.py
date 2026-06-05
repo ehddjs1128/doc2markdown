@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from modules.assembly.adapter_helpers import (
+from modules.assembly.adapters.helpers import (
     BBOX_KEYS,
     BODY_FONT_SIZE_KEYS,
     COLUMN_COUNT_KEYS,
@@ -29,7 +29,6 @@ from modules.assembly.adapter_helpers import (
     WARNING_LAYOUT_MISSING_ID,
     WARNING_LAYOUT_MISSING_PAGE,
     _build_adapter_metadata,
-    _coerce_list,
     _extract_metadata,
     _has_layout_shape,
     _is_layout_sequence,
@@ -37,13 +36,16 @@ from modules.assembly.adapter_helpers import (
     _make_element_fallback_id,
     _make_page_element_fallback_id,
     _merge_page_stats,
-    _normalize_bbox,
-    _normalize_float,
-    _normalize_int,
     _normalize_kind,
-    _normalize_str,
-    _normalize_text,
-    _pick_first,
+)
+from modules.assembly.common.geometry import normalize_bbox
+from modules.assembly.common.values import (
+    coerce_list,
+    normalize_float,
+    normalize_int,
+    normalize_str,
+    normalize_text,
+    pick_first,
 )
 from modules.assembly.ir import (
     AssemblyElement,
@@ -56,6 +58,7 @@ from modules.assembly.ir import (
     TableRef,
 )
 from modules.assembly.types import AssemblySourceType
+
 
 def from_layout_output(raw: Any) -> AssemblyResult:
     """검증된 layout payload 형태를 adapter_seed 결과로 바꾼다."""
@@ -73,7 +76,7 @@ def from_layout_output(raw: Any) -> AssemblyResult:
 
 def _resolve_layout_source(raw: Any) -> Any:
     if isinstance(raw, dict):
-        nested = _pick_first(raw, LAYOUT_CONTAINER_KEYS)
+        nested = pick_first(raw, LAYOUT_CONTAINER_KEYS)
         if nested is not None:
             return nested
     if _has_layout_shape(raw):
@@ -87,7 +90,7 @@ def _infer_layout_source(raw: Any) -> AssemblySourceType:
     if _is_layout_sequence(raw):
         return 'direct_list'
     if isinstance(raw, dict):
-        if _pick_first(raw, LAYOUT_CONTAINER_KEYS) is not None:
+        if pick_first(raw, LAYOUT_CONTAINER_KEYS) is not None:
             return 'layout_container'
         return 'raw'
     return 'raw'
@@ -107,7 +110,7 @@ def _extract_object_refs_from_elements(elements: List[AssemblyElement], figure_a
             table_refs.append(TableRef(table_id=element.id, page=element.page, bbox=element.bbox, source_block_ids=[element.id], metadata=table_metadata, raw=element.raw))
         elif element.kind == 'figure':
             figure_metadata = figure_assets_metadata.get(element.id, {})
-            asset_path = _normalize_str(figure_metadata.get('asset_path') or element.metadata.get('asset_path') or element.metadata.get('crop_path'))
+            asset_path = normalize_str(figure_metadata.get('asset_path') or element.metadata.get('asset_path') or element.metadata.get('crop_path'))
             figure_refs.append(FigureRef(figure_id=element.id, page=element.page, bbox=element.bbox, asset_path=asset_path, source_block_ids=[element.id], metadata={'source': 'layout_element', **element.metadata, **figure_metadata}, raw=element.raw))
         elif element.kind == 'note':
             note_refs.append(NoteRef(note_id=element.id, page=element.page, bbox=element.bbox, text=element.text, source_block_ids=[element.id], metadata={'source': 'layout_element', **element.metadata}, raw=element.raw))
@@ -139,7 +142,7 @@ def _extract_layout_document_metadata(raw: Any) -> Dict[str, Any]:
 def _extract_figure_assets_metadata(raw: Any) -> Dict[str, Dict[str, Any]]:
     if not isinstance(raw, dict):
         return {}
-    candidate = _pick_first(raw, FIGURE_ASSET_KEYS)
+    candidate = pick_first(raw, FIGURE_ASSET_KEYS)
     if isinstance(candidate, dict):
         return {str(key): value for key, value in candidate.items() if isinstance(value, dict)}
     return {}
@@ -158,12 +161,12 @@ def _extract_layout_elements(raw: Any) -> Tuple[List[AssemblyElement], List[Asse
         return elements, warnings
     if not isinstance(raw, dict):
         return elements, warnings
-    pages = _coerce_list(_pick_first(raw, PAGE_LIST_KEYS))
+    pages = coerce_list(pick_first(raw, PAGE_LIST_KEYS))
     for page_index, page_payload in enumerate(pages, start=1):
         if not isinstance(page_payload, dict):
             continue
-        page_number = _normalize_int(_pick_first(page_payload, PAGE_NUMBER_KEYS), default=page_index)
-        page_elements = _coerce_list(_pick_first(page_payload, ELEMENT_LIST_KEYS))
+        page_number = normalize_int(pick_first(page_payload, PAGE_NUMBER_KEYS), default=page_index)
+        page_elements = coerce_list(pick_first(page_payload, ELEMENT_LIST_KEYS))
         for item_index, item in enumerate(page_elements, start=1):
             element, item_warnings = _build_element(item, fallback_page=page_number, fallback_id=_make_page_element_fallback_id(page_number, item_index))
             if element is not None:
@@ -171,7 +174,7 @@ def _extract_layout_elements(raw: Any) -> Tuple[List[AssemblyElement], List[Asse
             warnings.extend(item_warnings)
     if elements:
         return elements, warnings
-    top_level_elements = _coerce_list(_pick_first(raw, ELEMENT_LIST_KEYS))
+    top_level_elements = coerce_list(pick_first(raw, ELEMENT_LIST_KEYS))
     for index, item in enumerate(top_level_elements, start=1):
         element, item_warnings = _build_element(item, fallback_page=None, fallback_id=_make_element_fallback_id(index))
         if element is not None:
@@ -193,13 +196,13 @@ def _extract_page_stats(raw: Any) -> Tuple[List[PageStats], List[AssemblyWarning
     warnings: List[AssemblyWarning] = []
     if not isinstance(raw, dict):
         return [], warnings
-    explicit_stats = _coerce_list(_pick_first(raw, PAGE_STATS_KEYS))
+    explicit_stats = coerce_list(pick_first(raw, PAGE_STATS_KEYS))
     for index, item in enumerate(explicit_stats, start=1):
         page_stats, item_warnings = _build_page_stats(item, fallback_page=index)
         if page_stats is not None:
             stats_by_page[page_stats.page] = page_stats
         warnings.extend(item_warnings)
-    pages = _coerce_list(_pick_first(raw, PAGE_LIST_KEYS))
+    pages = coerce_list(pick_first(raw, PAGE_LIST_KEYS))
     for index, item in enumerate(pages, start=1):
         page_stats, item_warnings = _build_page_stats(item, fallback_page=index)
         if page_stats is None:
@@ -220,15 +223,15 @@ def _build_element(raw: Any, fallback_page: Optional[int], fallback_id: str) -> 
     if isinstance(raw, AssemblyElement):
         return raw, warnings
     payload = raw if isinstance(raw, dict) else {'text': raw}
-    page = _normalize_int(_pick_first(payload, PAGE_NUMBER_KEYS), default=fallback_page)
+    page = normalize_int(pick_first(payload, PAGE_NUMBER_KEYS), default=fallback_page)
     page_missing = page is None
     if page is None:
         page = 1
-    label = _normalize_str(_pick_first(payload, ELEMENT_LABEL_KEYS))
+    label = normalize_str(pick_first(payload, ELEMENT_LABEL_KEYS))
     kind = _normalize_kind(label or 'text')
-    bbox = _normalize_bbox(_pick_first(payload, BBOX_KEYS) or payload)
-    text = _normalize_text(_pick_first(payload, TEXT_KEYS))
-    raw_element_id = _normalize_str(_pick_first(payload, ELEMENT_ID_KEYS))
+    bbox = normalize_bbox(pick_first(payload, BBOX_KEYS) or payload)
+    text = normalize_text(pick_first(payload, TEXT_KEYS))
+    raw_element_id = normalize_str(pick_first(payload, ELEMENT_ID_KEYS))
     metadata = _extract_metadata(payload, {*ELEMENT_ID_KEYS, *PAGE_NUMBER_KEYS, *ELEMENT_LABEL_KEYS, *BBOX_KEYS, *TEXT_KEYS, *CONFIDENCE_KEYS, *COLUMN_KEYS, *READING_ORDER_KEYS, *PARENT_KEYS})
     if raw_element_id is None:
         element_id = fallback_id
@@ -241,7 +244,7 @@ def _build_element(raw: Any, fallback_page: Optional[int], fallback_id: str) -> 
         element_id = raw_element_id
     if page_missing:
         warnings.append(AssemblyWarning(code=WARNING_LAYOUT_MISSING_PAGE, message='layout element is missing page information; defaulted to page 1.', level='warning', page=page, element_ids=[element_id], raw=raw))
-    element = AssemblyElement(id=element_id, page=page, kind=kind, bbox=bbox, text=text, label=label, confidence=_normalize_float(_pick_first(payload, CONFIDENCE_KEYS)), column_id=_normalize_int(_pick_first(payload, COLUMN_KEYS)), reading_order=_normalize_int(_pick_first(payload, READING_ORDER_KEYS)), parent_id=_normalize_str(_pick_first(payload, PARENT_KEYS)), metadata=metadata, raw=raw)
+    element = AssemblyElement(id=element_id, page=page, kind=kind, bbox=bbox, text=text, label=label, confidence=normalize_float(pick_first(payload, CONFIDENCE_KEYS)), column_id=normalize_int(pick_first(payload, COLUMN_KEYS)), reading_order=normalize_int(pick_first(payload, READING_ORDER_KEYS)), parent_id=normalize_str(pick_first(payload, PARENT_KEYS)), metadata=metadata, raw=raw)
     return element, warnings
 
 
@@ -251,8 +254,8 @@ def _build_page_stats(raw: Any, fallback_page: int) -> Tuple[Optional[PageStats]
         return raw, warnings
     if not isinstance(raw, dict):
         return None, warnings
-    page = _normalize_int(_pick_first(raw, PAGE_NUMBER_KEYS), default=fallback_page)
+    page = normalize_int(pick_first(raw, PAGE_NUMBER_KEYS), default=fallback_page)
     if page is None:
         return None, warnings
-    page_stats = PageStats(page=page, width=_normalize_float(_pick_first(raw, PAGE_WIDTH_KEYS)), height=_normalize_float(_pick_first(raw, PAGE_HEIGHT_KEYS)), median_line_height=_normalize_float(_pick_first(raw, LINE_HEIGHT_KEYS)), body_font_size=_normalize_float(_pick_first(raw, BODY_FONT_SIZE_KEYS)), column_count=_normalize_int(_pick_first(raw, COLUMN_COUNT_KEYS)), metadata=_extract_metadata(raw, {*PAGE_NUMBER_KEYS, *PAGE_WIDTH_KEYS, *PAGE_HEIGHT_KEYS, *LINE_HEIGHT_KEYS, *BODY_FONT_SIZE_KEYS, *COLUMN_COUNT_KEYS, 'elements', 'blocks', 'items', 'layout_elements', 'regions'}), raw=raw)
+    page_stats = PageStats(page=page, width=normalize_float(pick_first(raw, PAGE_WIDTH_KEYS)), height=normalize_float(pick_first(raw, PAGE_HEIGHT_KEYS)), median_line_height=normalize_float(pick_first(raw, LINE_HEIGHT_KEYS)), body_font_size=normalize_float(pick_first(raw, BODY_FONT_SIZE_KEYS)), column_count=normalize_int(pick_first(raw, COLUMN_COUNT_KEYS)), metadata=_extract_metadata(raw, {*PAGE_NUMBER_KEYS, *PAGE_WIDTH_KEYS, *PAGE_HEIGHT_KEYS, *LINE_HEIGHT_KEYS, *BODY_FONT_SIZE_KEYS, *COLUMN_COUNT_KEYS, 'elements', 'blocks', 'items', 'layout_elements', 'regions'}), raw=raw)
     return page_stats, warnings

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from modules.assembly.adapter_helpers import (
+from modules.assembly.adapters.helpers import (
     BBOX_KEYS,
     CAPTION_KEYS,
     NOTE_KEYS,
@@ -17,7 +17,6 @@ from modules.assembly.adapter_helpers import (
     WARNING_TABLE_MISSING_ID,
     WARNING_TABLE_MISSING_PAGE,
     _build_adapter_metadata,
-    _coerce_list,
     _extract_metadata,
     _extract_source_block_ids,
     _has_layout_shape,
@@ -26,13 +25,16 @@ from modules.assembly.adapter_helpers import (
     _looks_like_markdown_table,
     _looks_like_table_entry,
     _make_table_fallback_id,
-    _normalize_bbox,
-    _normalize_id_list,
-    _normalize_int,
     _normalize_markdown_table,
-    _normalize_ref_id,
-    _normalize_str,
-    _pick_first,
+)
+from modules.assembly.common.geometry import normalize_bbox
+from modules.assembly.common.values import (
+    coerce_list,
+    normalize_id_list,
+    normalize_int,
+    normalize_ref_id,
+    normalize_str,
+    pick_first,
 )
 from modules.assembly.ir import AssemblyResult, AssemblyWarning, AssembledDocument, TableRef
 from modules.assembly.types import AssemblySourceType
@@ -72,7 +74,7 @@ def from_table_output(raw: Any) -> AssemblyResult:
 
 def _resolve_table_source(raw: Any) -> Any:
     if isinstance(raw, dict):
-        nested = _pick_first(raw, TABLE_CONTAINER_KEYS)
+        nested = pick_first(raw, TABLE_CONTAINER_KEYS)
         if nested is not None:
             return nested
 
@@ -87,7 +89,7 @@ def _infer_table_source(raw: Any) -> AssemblySourceType:
     if _is_table_sequence(raw):
         return "direct_list"
     if isinstance(raw, dict):
-        if _pick_first(raw, TABLE_CONTAINER_KEYS) is not None:
+        if pick_first(raw, TABLE_CONTAINER_KEYS) is not None:
             return "table_container"
         return "raw"
     return "raw"
@@ -131,7 +133,7 @@ def _extract_table_entries(raw: Any) -> list[Any]:
     if not isinstance(raw, dict):
         return [raw]
 
-    table_entries = _coerce_list(_pick_first(raw, TABLE_LIST_KEYS))
+    table_entries = coerce_list(pick_first(raw, TABLE_LIST_KEYS))
     if table_entries:
         return [
             {"markdown": item} if _looks_like_markdown_table(item) else item
@@ -165,7 +167,7 @@ def _build_table_ref(
         },
     )
 
-    markdown = _normalize_markdown_table(_pick_first(payload, TABLE_MARKDOWN_KEYS))
+    markdown = _normalize_markdown_table(pick_first(payload, TABLE_MARKDOWN_KEYS))
     if markdown is not None:
         metadata["markdown"] = markdown
         metadata["content_format"] = "markdown"
@@ -193,9 +195,9 @@ def _build_table_ref(
         TableRef(
             table_id=table_id,
             page=page,
-            bbox=_normalize_bbox(_pick_first(payload, BBOX_KEYS) or payload),
-            caption_id=_normalize_ref_id(_pick_first(payload, CAPTION_KEYS)),
-            note_ids=_normalize_id_list(_pick_first(payload, NOTE_KEYS)),
+            bbox=normalize_bbox(pick_first(payload, BBOX_KEYS) or payload),
+            caption_id=normalize_ref_id(pick_first(payload, CAPTION_KEYS)),
+            note_ids=normalize_id_list(pick_first(payload, NOTE_KEYS)),
             source_block_ids=_extract_source_block_ids(payload),
             metadata=metadata,
             raw=raw,
@@ -218,7 +220,7 @@ def _resolve_table_id(
     fallback_page: int | None,
     raw: Any,
 ) -> tuple[str, bool, list[AssemblyWarning]]:
-    table_id = _normalize_str(_pick_first(payload, TABLE_ID_KEYS))
+    table_id = normalize_str(pick_first(payload, TABLE_ID_KEYS))
     if table_id is not None:
         return table_id, False, []
 
@@ -244,7 +246,7 @@ def _resolve_table_page(
     table_id: str,
     raw: Any,
 ) -> tuple[int, bool, list[AssemblyWarning]]:
-    page = _normalize_int(_pick_first(payload, PAGE_NUMBER_KEYS), default=fallback_page)
+    page = normalize_int(pick_first(payload, PAGE_NUMBER_KEYS), default=fallback_page)
     if page is not None:
         return page, False, []
 

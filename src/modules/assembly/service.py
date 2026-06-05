@@ -7,11 +7,11 @@ from typing import Any
 from modules.assembly.adapters import from_outputs as adapter_from_outputs
 from modules.assembly.adapters import from_raw as adapter_from_raw
 from modules.assembly.ir import AssemblyResult
-from modules.assembly.normalize_filter import NormalizeFilter
 from modules.assembly.orchestration import AssemblyBuildTrace, AssemblyTraceBuilder
-from modules.assembly.stage_contracts import require_assembly_result, require_stage
-from modules.assembly.structure import StructureAssembler
-from modules.assembly.validator import AssemblyValidator
+from modules.assembly.stages.contracts import require_assembly_result, require_stage
+from modules.assembly.stages.normalize_filter import NormalizeFilter
+from modules.assembly.stages.structure import StructureAssembler
+from modules.assembly.stages.validation import AssemblyValidator
 
 
 class DocumentAssembler:

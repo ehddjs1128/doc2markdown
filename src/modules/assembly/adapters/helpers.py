@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-"""Shared adapter helpers for converting external layout/table output into assembly IR."""
+"""Adapter-specific keys, shape checks, and fallback helpers."""
 
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from modules.assembly.common.values import normalize_id_list, normalize_str, pick_first
 from modules.assembly.ir import AssemblyElement, AssemblyMeta, PageStats, TableRef
 from modules.assembly.types import (
     AssemblyAdapterType,
@@ -12,39 +12,9 @@ from modules.assembly.types import (
     AssemblySourceType,
     AssemblyStage,
     AssemblyWarningCode,
-    BBox,
 )
 
-REF_ID_KEYS: Tuple[str, ...] = ('id', 'note_id', 'caption_id', 'uuid')
-
-
 KIND_ALIASES: Dict[str, AssemblyElementKind] = {'text': 'text', 'paragraph': 'text', 'body': 'text', 'heading': 'heading', 'title': 'heading', 'section_header': 'heading', 'list_item': 'list_item', 'list': 'list_item', 'bullet': 'list_item', 'table': 'table', 'figure': 'figure', 'picture': 'figure', 'image': 'figure', 'caption': 'caption', 'note': 'note', 'footnote': 'note', 'formula': 'formula', 'equation': 'formula', 'quote': 'quote', 'blockquote': 'quote', 'code': 'code_block', 'code_block': 'code_block', 'header': 'header', 'page_header': 'header', 'footer': 'footer', 'page_footer': 'footer', 'page_number': 'page_number', 'noise': 'noise', 'artifact': 'noise'}
-
-
-def _pick_first(payload: Dict[str, Any], keys: Tuple[str, ...]) -> Any:
-    for key in keys:
-        if key in payload and payload[key] is not None:
-            return payload[key]
-    return None
-
-
-def _coerce_list(value: Any) -> List[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, tuple):
-        return list(value)
-    return [value]
-
-
-def _normalize_text(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    return re.sub('\\s+', ' ', text)
 
 
 def _normalize_kind(value: str) -> AssemblyElementKind:
@@ -52,77 +22,8 @@ def _normalize_kind(value: str) -> AssemblyElementKind:
     return KIND_ALIASES.get(normalized, 'text')
 
 
-def _normalize_bbox(value: Any) -> Optional[BBox]:
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        if {'x1', 'y1', 'x2', 'y2'}.issubset(value.keys()):
-            coords = [value['x1'], value['y1'], value['x2'], value['y2']]
-        elif {'left', 'top', 'right', 'bottom'}.issubset(value.keys()):
-            coords = [value['left'], value['top'], value['right'], value['bottom']]
-        elif {'x', 'y', 'width', 'height'}.issubset(value.keys()):
-            x = _normalize_float(value['x'])
-            y = _normalize_float(value['y'])
-            width = _normalize_float(value['width'])
-            height = _normalize_float(value['height'])
-            if None in (x, y, width, height):
-                return None
-            coords = [x, y, x + width, y + height]
-        else:
-            return None
-    elif isinstance(value, (list, tuple)) and len(value) == 4:
-        coords = list(value)
-    else:
-        return None
-    normalized = [_normalize_float(item) for item in coords]
-    if any(item is None for item in normalized):
-        return None
-    return normalized[0], normalized[1], normalized[2], normalized[3]
-
-
-def _normalize_float(value: Any) -> Optional[float]:
-    if value is None or value == '':
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _normalize_int(value: Any, default: Optional[int]=None) -> Optional[int]:
-    if value is None or value == '':
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _normalize_str(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _normalize_id_list(value: Any) -> List[str]:
-    items = _coerce_list(value)
-    normalized: List[str] = []
-    for item in items:
-        candidate = _normalize_ref_id(item)
-        if candidate is not None:
-            normalized.append(candidate)
-    return normalized
-
-
-def _normalize_ref_id(value: Any) -> Optional[str]:
-    if isinstance(value, dict):
-        return _normalize_str(_pick_first(value, REF_ID_KEYS))
-    return _normalize_str(value)
-
-
 def _looks_like_markdown_table(value: Any) -> bool:
-    text = _normalize_str(value)
+    text = normalize_str(value)
     if text is None:
         return False
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -137,7 +38,7 @@ def _looks_like_markdown_table(value: Any) -> bool:
 
 
 def _normalize_markdown_table(value: Any) -> Optional[str]:
-    text = _normalize_str(value)
+    text = normalize_str(value)
     if text is None or not _looks_like_markdown_table(text):
         return None
     return text
@@ -145,36 +46,6 @@ def _normalize_markdown_table(value: Any) -> Optional[str]:
 
 def _extract_metadata(payload: Dict[str, Any], known_keys: set[str]) -> Dict[str, Any]:
     return {key: value for key, value in payload.items() if key not in known_keys and value is not None}
-
-
-def _merge_unique_ids(*values: Any) -> List[str]:
-    merged: Dict[str, None] = {}
-    for value in values:
-        for item in _coerce_list(value):
-            candidate = _normalize_ref_id(item)
-            if candidate is not None:
-                merged[candidate] = None
-    return list(merged.keys())
-
-
-def _bbox_iou(left: Optional[BBox], right: Optional[BBox]) -> Optional[float]:
-    if left is None or right is None:
-        return None
-    left_x1, left_y1, left_x2, left_y2 = left
-    right_x1, right_y1, right_x2, right_y2 = right
-    inter_x1 = max(left_x1, right_x1)
-    inter_y1 = max(left_y1, right_y1)
-    inter_x2 = min(left_x2, right_x2)
-    inter_y2 = min(left_y2, right_y2)
-    if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
-        return 0.0
-    intersection = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
-    left_area = max(0.0, (left_x2 - left_x1) * (left_y2 - left_y1))
-    right_area = max(0.0, (right_x2 - right_x1) * (right_y2 - right_y1))
-    union = left_area + right_area - intersection
-    if union <= 0:
-        return 0.0
-    return intersection / union
 
 
 LAYOUT_CONTAINER_KEYS: Tuple[str, ...] = ('layout_output', 'layout_result', 'layout', 'vision_output', 'vision_result', 'ordered_layout')
@@ -313,13 +184,13 @@ def _make_table_fallback_id(index: int) -> str:
 
 
 def _extract_source_block_ids(payload: Dict[str, Any]) -> List[str]:
-    value = _pick_first(payload, SOURCE_BLOCK_IDS_KEYS)
-    return _normalize_id_list(value)
+    value = pick_first(payload, SOURCE_BLOCK_IDS_KEYS)
+    return normalize_id_list(value)
 
 
 def _has_layout_shape(raw: Any) -> bool:
     if isinstance(raw, dict):
-        return _pick_first(raw, PAGE_LIST_KEYS) is not None or _pick_first(raw, ELEMENT_LIST_KEYS) is not None or _looks_like_element_entry(raw)
+        return pick_first(raw, PAGE_LIST_KEYS) is not None or pick_first(raw, ELEMENT_LIST_KEYS) is not None or _looks_like_element_entry(raw)
     return _is_layout_sequence(raw)
 
 
@@ -327,7 +198,7 @@ def _has_table_shape(raw: Any) -> bool:
     if _looks_like_markdown_table(raw):
         return True
     if isinstance(raw, dict):
-        return _pick_first(raw, TABLE_LIST_KEYS) is not None or _pick_first(raw, TABLE_MARKDOWN_KEYS) is not None or _looks_like_table_entry(raw)
+        return pick_first(raw, TABLE_LIST_KEYS) is not None or pick_first(raw, TABLE_MARKDOWN_KEYS) is not None or _looks_like_table_entry(raw)
     return _is_table_sequence(raw)
 
 
@@ -358,7 +229,7 @@ def _looks_like_table_entry(raw: Any) -> bool:
         return True
     if not isinstance(raw, dict):
         return False
-    markdown_candidate = _pick_first(raw, TABLE_MARKDOWN_KEYS)
+    markdown_candidate = pick_first(raw, TABLE_MARKDOWN_KEYS)
     if _looks_like_markdown_table(markdown_candidate):
         return True
     return any(key in raw for key in (*TABLE_ID_KEYS, *CAPTION_KEYS, *NOTE_KEYS, *TABLE_STRUCTURE_KEYS))

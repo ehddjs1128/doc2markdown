@@ -3,10 +3,10 @@ import unittest
 from tests._helpers import load_assembly_fixture
 
 from modules.assembly.ir import AssemblyMeta, AssemblyResult
-from modules.assembly.normalize_filter import NormalizeFilter
 from modules.assembly.service import DocumentAssembler
-from modules.assembly.structure import StructureAssembler
-from modules.assembly.validator import AssemblyValidator
+from modules.assembly.stages.normalize_filter import NormalizeFilter
+from modules.assembly.stages.structure import StructureAssembler
+from modules.assembly.stages.validation import AssemblyValidator
 
 
 class _FakeEnricherConfig:
