@@ -184,26 +184,31 @@ def process_table_hybrid(image_path):
     orig_img = Image.open(image_path).convert("RGB")
     img_cv = cv2.imread(image_path)
 
+    target_width = 800  # TATR이 구조를 가장 잘 파악하는 최적 너비
     h, w = img_cv.shape[:2]
-
-    if w < 800:
-        # 비율을 유지하며 최대 1.5배~2배까지만 안전하게 확대
-        scale = min(1.5, 1200 / w) 
+    
+    if w != target_width:
+        scale = target_width / w
         new_w, new_h = int(w * scale), int(h * scale)
         
-        img_cv = cv2.resize(img_cv, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-        orig_img = orig_img.resize((new_w, new_h), Image.Resampling.BICUBIC)
-        print(f"[전처리] 소형 표 감지: {w}x{h} -> {new_w}x{new_h} 안전 업스케일링")
-    else:
-        new_w, new_h = w, h
+        interp_cv = cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
+        interp_pil = Image.Resampling.BICUBIC if scale > 1.0 else Image.Resampling.LANCZOS
+        
+        img_cv = cv2.resize(img_cv, (new_w, new_h), interpolation=interp_cv)
+        orig_img = orig_img.resize((new_w, new_h), resample=interp_pil)
 
-    pad_y = max(50, int(new_h * 0.15))  
-    pad_x = max(50, int(new_w * 0.15)) 
-    
-    padded_img_pil = ImageOps.expand(orig_img, border=(pad_x, pad_y, pad_x, pad_y), fill="white")
+    padding = 50
+    padded_img_pil = ImageOps.expand(orig_img, border=padding, fill="white")
     img_cv_padded = cv2.copyMakeBorder(
-        img_cv, pad_y, pad_y, pad_x, pad_x, cv2.BORDER_CONSTANT, value=[255, 255, 255]
+        img_cv,
+        padding,
+        padding,
+        padding,
+        padding,
+        cv2.BORDER_CONSTANT,
+        value=[255, 255, 255],
     )
+
 
     print("1. TATR: 표 구조 분석")
     rows, cols = get_tatr_rows_cols(padded_img_pil)
@@ -426,25 +431,3 @@ def _run_cli_extraction(image_path: str, result_path: str) -> int:
         json.dump(payload, file, ensure_ascii=False, indent=2)
 
     return exit_code
-
-
-if __name__ == "__main__":
-    if len(sys.argv) >= 4 and sys.argv[1] == "--extract":
-        sys.exit(_run_cli_extraction(sys.argv[2], sys.argv[3]))
-
-    target_image = "example_sheets_7.png"
-    import time
-
-    start = time.time()
-    if os.path.exists(target_image):
-        print(f"\n'{target_image}' 테스트 시작...")
-        final_md = process_table_hybrid(target_image)
-        print("\n" + final_md + "\n")
-
-        with open("final_perfect_markdown.md", "w", encoding="utf-8") as file:
-            file.write(final_md)
-        print("'final_perfect_markdown.md' 파일이 저장되었습니다.")
-    else:
-        print(f"'{target_image}' 파일을 찾을 수 없습니다.")
-    end = time.time()
-    print(f"\n걸린 시간: {end - start:.2f}초")
