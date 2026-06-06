@@ -2,10 +2,14 @@
 # pip install huggingface_hub
 # ingestion.py 실행 후 실행하여야 합니다 (PDF에서 이미지 추출 필요)
 
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image, ImageDraw, ImageFont
+from tests._helpers import import_or_skip
+
+cv2 = import_or_skip("cv2", "OpenCV is required for vision comparison tests")
+np = import_or_skip("numpy", "NumPy is required for vision comparison tests")
+plt = import_or_skip("matplotlib.pyplot", "matplotlib is required for vision comparison tests")
+Image = import_or_skip("PIL.Image", "Pillow is required for vision comparison tests")
+ImageDraw = import_or_skip("PIL.ImageDraw", "Pillow is required for vision comparison tests")
+ImageFont = import_or_skip("PIL.ImageFont", "Pillow is required for vision comparison tests")
 
 # ==========================================
 # 1. OpenCV 엔진 (Baseline - 딥러닝 아님)

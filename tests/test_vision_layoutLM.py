@@ -5,10 +5,12 @@
 import warnings
 warnings.filterwarnings("ignore", message=".*copying from a non-meta parameter.*")
 
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
+from tests._helpers import import_or_skip
+
+cv2 = import_or_skip("cv2", "OpenCV is required for LayoutLM visualization tests")
+np = import_or_skip("numpy", "NumPy is required for LayoutLM visualization tests")
+plt = import_or_skip("matplotlib.pyplot", "matplotlib is required for LayoutLM visualization tests")
+Image = import_or_skip("PIL.Image", "Pillow is required for LayoutLM visualization tests")
 
 def run_layoutlm_engine(image_path):
     """

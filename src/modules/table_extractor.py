@@ -13,7 +13,7 @@ class TableExtractor:
     def __init__(self):
         self.python_executable = sys.executable
         self.worker_script = Path(__file__).resolve().with_name("Table_to_markdown.py")
-        self.timeout_seconds = 300
+        self.timeout_seconds = _env_int("TABLE_EXTRACTION_WORKER_TIMEOUT_SECONDS", default=300)
 
     def extract_table(self, image_path: str) -> str:
         """표 추출 워커를 별도 프로세스로 실행하고 Markdown을 반환한다."""
@@ -63,3 +63,16 @@ class TableExtractor:
         """워커 프로세스와 결과를 주고받을 임시 JSON 파일 경로를 만든다."""
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as temp_file:
             return temp_file.name
+
+
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        value = int(raw_value.strip())
+    except ValueError:
+        return default
+
+    return value if value > 0 else default

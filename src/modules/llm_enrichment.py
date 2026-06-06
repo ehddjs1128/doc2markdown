@@ -57,12 +57,65 @@ class _ContentRepairCandidate:
     language: str
 
 
-class SemanticEnricher:
-    """구조 조립 전 text block 재분류와 caption-object 연결 보정."""
-
+class _BaseEnricher:
     def __init__(self, config: LLMConfig | None = None, client: LLMClient | None = None):
         self.config = config or LLMConfig.from_env()
         self.client = client
+
+    def _client(self) -> LLMClient:
+        if self.client is None:
+            self.client = LocalTransformersLLMClient(self.config)
+        return self.client
+
+    def _llm_metadata(self, task: str, confidence: float | None) -> dict[str, Any]:
+        return {
+            "llm_enriched": True,
+            "llm_model": self.config.model_id,
+            "llm_task": task,
+            "llm_confidence": confidence,
+            "llm_enrichment_mode": self.config.mode,
+        }
+
+    @staticmethod
+    def _merge_summary(metadata: dict[str, Any], key: str, summary: dict[str, Any]) -> dict[str, Any]:
+        existing = dict(metadata.get("llm_enrichment") or {})
+        existing[key] = summary
+        return {**dict(metadata), "llm_enrichment": existing}
+
+    @classmethod
+    def _with_metadata_and_warnings(
+        cls,
+        result: AssemblyResult,
+        key: str,
+        summary: dict[str, Any],
+        warnings: list[AssemblyWarning],
+    ) -> AssemblyResult:
+        document_metadata = cls._merge_summary(result.document.metadata, key, summary)
+        return replace(
+            result,
+            document=replace(result.document, metadata=document_metadata),
+            warnings=list(result.warnings) + warnings,
+        )
+
+    @staticmethod
+    def _warning(
+        code: str,
+        message: str,
+        *,
+        element_ids: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AssemblyWarning:
+        return AssemblyWarning(
+            code=code,
+            message=message,
+            level="warning",
+            element_ids=element_ids or [],
+            metadata=metadata or {},
+        )
+
+
+class SemanticEnricher(_BaseEnricher):
+    """구조 조립 전 text block 재분류와 caption-object 연결 보정."""
 
     def apply(self, result: AssemblyResult) -> AssemblyResult:
         if not self.config.runs_semantic():
@@ -98,7 +151,7 @@ class SemanticEnricher:
         )
         if not payload["candidates"]:
             print("[LLM][Semantic] 후보 없음: LLM 호출 건너뜀")
-            return self._with_metadata_and_warnings(result, summary, warnings)
+            return self._with_metadata_and_warnings(result, "semantic", summary, warnings)
 
         started_at = time.perf_counter()
         try:
@@ -109,7 +162,7 @@ class SemanticEnricher:
                 f"message={_format_error(error)}, elapsed={_elapsed_seconds(started_at)}s"
             )
             warnings.append(self._warning("llm_semantic_failed", str(error)))
-            return self._with_metadata_and_warnings(result, summary, warnings)
+            return self._with_metadata_and_warnings(result, "semantic", summary, warnings)
 
         parsed_response = parse_semantic_response(response)
         summary["decision_count"] = len(parsed_response.decisions)
@@ -149,11 +202,6 @@ class SemanticEnricher:
             metadata=result.metadata,
             raw=result.raw,
         )
-
-    def _client(self) -> LLMClient:
-        if self.client is None:
-            self.client = LocalTransformersLLMClient(self.config)
-        return self.client
 
     @staticmethod
     def _build_semantic_payload(result: AssemblyResult) -> dict[str, Any]:
@@ -393,57 +441,8 @@ class SemanticEnricher:
             metadata={**dict(figure_ref.metadata), **self._llm_metadata("caption_candidate_repair", link.confidence)},
         )
 
-    def _llm_metadata(self, task: str, confidence: float | None) -> dict[str, Any]:
-        return {
-            "llm_enriched": True,
-            "llm_model": self.config.model_id,
-            "llm_task": task,
-            "llm_confidence": confidence,
-            "llm_enrichment_mode": self.config.mode,
-        }
-
-    @staticmethod
-    def _merge_summary(metadata: dict[str, Any], key: str, summary: dict[str, Any]) -> dict[str, Any]:
-        existing = dict(metadata.get("llm_enrichment") or {})
-        existing[key] = summary
-        return {**dict(metadata), "llm_enrichment": existing}
-
-    @staticmethod
-    def _with_metadata_and_warnings(
-        result: AssemblyResult,
-        summary: dict[str, Any],
-        warnings: list[AssemblyWarning],
-    ) -> AssemblyResult:
-        document_metadata = SemanticEnricher._merge_summary(result.document.metadata, "semantic", summary)
-        return replace(
-            result,
-            document=replace(result.document, metadata=document_metadata),
-            warnings=list(result.warnings) + warnings,
-        )
-
-    @staticmethod
-    def _warning(
-        code: str,
-        message: str,
-        *,
-        element_ids: list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> AssemblyWarning:
-        return AssemblyWarning(
-            code=code,
-            message=message,
-            level="warning",
-            element_ids=element_ids or [],
-            metadata=metadata or {},
-        )
-
-
-class ContentEnricher:
+class ContentEnricher(_BaseEnricher):
     """구조 조립 후 paragraph/list/heading text 보정."""
-
-    def __init__(self, config: LLMConfig | None = None, client: LLMClient | None = None):
-        self.config = config or LLMConfig.from_env()
-        self.client = client
 
     def apply(self, result: AssemblyResult) -> AssemblyResult:
         if not self.config.runs_content():
@@ -502,7 +501,7 @@ class ContentEnricher:
                 self._repair_node(section, warnings, summary, repairs_by_node, candidate_ids)
                 for section in result.document.sections
             ]
-        document_metadata = SemanticEnricher._merge_summary(result.document.metadata, "content", summary)
+        document_metadata = self._merge_summary(result.document.metadata, "content", summary)
         print(
             f"[LLM][Content] 완료: candidates={summary['llm_candidate_count']}, "
             f"batches={summary['batch_count']}, attempts={summary['attempt_count']}, "
@@ -519,11 +518,6 @@ class ContentEnricher:
             document=replace(result.document, children=children, sections=sections, metadata=document_metadata),
             warnings=list(result.warnings) + warnings,
         )
-
-    def _client(self) -> LLMClient:
-        if self.client is None:
-            self.client = LocalTransformersLLMClient(self.config)
-        return self.client
 
     def _repair_node(
         self,
@@ -632,7 +626,7 @@ class ContentEnricher:
         if self._non_space_signature(text) != self._non_space_signature(repair.text):
             summary["discarded_count"] += 1
             warnings.append(
-                SemanticEnricher._warning(
+                self._warning(
                     "llm_content_preservation_failed",
                     "LLM content repair가 비공백 문자를 변경하여 결과 폐기.",
                     element_ids=[node_id],
@@ -722,7 +716,7 @@ class ContentEnricher:
                     f"message={_format_error(error)}, elapsed={_elapsed_seconds(started_at)}s"
                 )
                 warnings.append(
-                    SemanticEnricher._warning(
+                    self._warning(
                         "llm_content_failed",
                         str(error),
                         element_ids=batch_ids,
@@ -822,16 +816,6 @@ class ContentEnricher:
     def _non_space_signature(text: str) -> str:
         return re.sub(r"\s+", "", text)
 
-    def _llm_metadata(self, task: str, confidence: float | None) -> dict[str, Any]:
-        return {
-            "llm_enriched": True,
-            "llm_model": self.config.model_id,
-            "llm_task": task,
-            "llm_confidence": confidence,
-            "llm_enrichment_mode": self.config.mode,
-        }
-
-
 def _elapsed_seconds(started_at: float) -> str:
     return f"{time.perf_counter() - started_at:.2f}"
 
@@ -847,6 +831,3 @@ def _format_node_ids(node_ids: list[str], *, limit: int = 3) -> str:
     if len(node_ids) <= limit:
         return ", ".join(node_ids)
     return f"{', '.join(node_ids[:limit])}, ..."
-
-
-__all__ = ["ContentEnricher", "SemanticEnricher"]

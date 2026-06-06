@@ -2,7 +2,6 @@ import os
 import uuid
 import base64
 import ollama
-import requests
 from openai import OpenAI
 
 MODEL_NAME = "gemma4:e4b"

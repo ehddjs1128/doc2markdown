@@ -105,27 +105,3 @@ NOTE_REF_ID_ATTR = "note_id"
 # 병합된 document.metadata 안에서 어댑터별 메타데이터를 구분하는 키
 MERGED_METADATA_LAYOUT_KEY = "layout"
 MERGED_METADATA_TABLE_KEY = "table"
-
-
-__all__ = [
-    "BBox",
-    "AssemblyElementKind",
-    "BlockRelationType",
-    "AssemblyWarningLevel",
-    "AssemblyWarningCode",
-    "AssemblyStage",
-    "AssemblyAdapterType",
-    "AssemblySourceType",
-    "AssembledNodeType",
-    "ASSEMBLED_NODE_SECTION",
-    "ASSEMBLED_NODE_PARAGRAPH_GROUP",
-    "ASSEMBLED_NODE_LIST_GROUP",
-    "ASSEMBLED_NODE_TABLE_REF",
-    "ASSEMBLED_NODE_FIGURE_REF",
-    "ASSEMBLED_NODE_NOTE_REF",
-    "TABLE_REF_ID_ATTR",
-    "FIGURE_REF_ID_ATTR",
-    "NOTE_REF_ID_ATTR",
-    "MERGED_METADATA_LAYOUT_KEY",
-    "MERGED_METADATA_TABLE_KEY",
-]

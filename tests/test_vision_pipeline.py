@@ -1,11 +1,10 @@
 import os
-import sys
-import pprint
-import cv2  # 시각화를 위해 OpenCV 추가
+from tests._helpers import import_or_skip
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.modules.ingestion import FilePreProcessor  # 1단계
-from src.modules.vision_engine import VisionEngine # 2단계
+cv2 = import_or_skip("cv2", "OpenCV is required for vision pipeline visualization tests")
+
+from modules.ingestion import FilePreProcessor  # 1단계
+from modules.vision_engine import VisionEngine # 2단계
 
 def draw_bboxes_from_json(final_output, output_base_dir="data/output"):
     """

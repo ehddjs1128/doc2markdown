@@ -1,6 +1,5 @@
 import os
 import json
-import dill
 from typing import Dict, Any, List
 from PIL import Image
 from ultralytics import YOLO

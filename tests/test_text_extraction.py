@@ -1,10 +1,10 @@
 import os
 import json
-import sys
-import cv2  # 시각화를 위해 OpenCV 추가
+from tests._helpers import import_or_skip
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.modules.text_extractor import TextExtractor
+cv2 = import_or_skip("cv2", "OpenCV is required for text extraction visualization tests")
+
+from modules.text_extractor import TextExtractor
 
 def draw_bboxes_from_json(final_output, output_base_dir="data/output"):
     """
