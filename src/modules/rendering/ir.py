@@ -13,9 +13,6 @@ RenderWarningLevel = Literal[
 ]
 
 RenderWarningCode = Literal[
-    "renderer_contract_only",
-    "unsupported_render_input",
-    "invalid_assembly_stage",
     "unsupported_node_type",
     "empty_heading",
     "empty_paragraph",
