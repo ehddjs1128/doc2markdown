@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from modules.assembly.ir import AssemblyResult
-from modules.rendering.ir import MarkdownRenderResult
+from modules.rendering.ir import MarkdownRenderResult, RenderWarning
 from modules.rendering.markdown.contracts import (
     normalize_render_input,
     require_validated_assembly,
@@ -50,9 +50,39 @@ class MarkdownRenderer:
         report_file_name: str = "render_report.json",
     ) -> dict[str, str]:
         """렌더링 결과를 문서 output 폴더에 저장한다."""
-        return save_render_result(
+        saved_paths = save_render_result(
             render_result=render_result,
             output_dir=output_dir,
             markdown_file_name=markdown_file_name,
             report_file_name=report_file_name,
         )
+        _print_render_summary(render_result, saved_paths)
+        return saved_paths
+
+
+def _print_render_summary(
+    render_result: MarkdownRenderResult,
+    saved_paths: dict[str, str],
+) -> None:
+    stats = render_result.stats
+    print(
+        "[Rendering] Markdown rendering completed: "
+        f"rendered_blocks={stats.rendered_block_count}, "
+        f"markdown_chars={len(render_result.markdown)}, "
+        f"warnings={stats.warning_count}, "
+        f"placeholders={stats.placeholder_count}, "
+        f"table_fallbacks={stats.table_fallback_count}"
+    )
+    print(f"[Rendering] └─ markdown_path={saved_paths.get('markdown_path')}")
+    print(f"[Rendering] └─ report_path={saved_paths.get('report_path')}")
+
+    warning_code_counts = _summarize_warning_codes(render_result.warnings)
+    if warning_code_counts:
+        print(f"[Rendering][Warning] warning_code_counts={warning_code_counts}")
+
+
+def _summarize_warning_codes(warnings: list[RenderWarning]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for warning in warnings:
+        summary[warning.code] = summary.get(warning.code, 0) + 1
+    return summary
